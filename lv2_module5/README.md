@@ -174,7 +174,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=tt
 
 | 파일 | 바꾸는 값 |
 |---|---|
-| `config/vision.yaml` | HSV 범위, 최소 면적, 해상도 |
+| `config/perception.yaml` | HSV 범위, 최소 면적, 해상도 |
 | `config/control.yaml` | Kp, direction, speed_limit, 회전 범위, 데드밴드, 제어 주기 |
 | `config/safety.yaml` | 입력 타임아웃, 복귀 프레임 수, 상태 유예 |
 
