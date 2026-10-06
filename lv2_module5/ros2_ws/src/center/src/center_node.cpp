@@ -185,6 +185,20 @@ public:
         4095.0
       );
 
+    // P gain
+
+    yaw_kp_ =
+      this->declare_parameter<double>(
+        "yaw_kp",
+        100.0
+      );    
+
+    pitch_kp_ =
+      this->declare_parameter<double>(
+        "pitch_kp",
+        100.0
+      );
+      
     // Maximum movement per command
     // Unit: tick
 
@@ -328,6 +342,13 @@ public:
 
     RCLCPP_INFO(
       this->get_logger(),
+      "Kp          : yaw=%.3f pitch=%.3f",
+      yaw_kp_,
+      pitch_kp_
+    );
+
+    RCLCPP_INFO(
+      this->get_logger(),
       "Max delta   : %.1f tick",
       max_delta_tick_
     );
@@ -357,6 +378,9 @@ private:
 
   double pitch_min_;
   double pitch_max_;
+
+  double yaw_kp_;
+  double pitch_kp_;
 
   double max_delta_tick_;
   double deadband_;
@@ -484,7 +508,7 @@ private:
 
     const double ey =
       msg->point.y;
-
+      
     const double area_ratio =
       msg->point.z;
 
@@ -536,7 +560,7 @@ private:
 
         "Waiting for /motor/state"
       );
-
+      
       return;
     }
 
@@ -558,20 +582,8 @@ private:
 
 
     // Clamp perception error
-
-    double error_x =
-      std::clamp(
-        ex,
-        -1.0,
-        1.0
-      );
-
-    double error_y =
-      std::clamp(
-        ey,
-        -1.0,
-        1.0
-      );
+    double error_x = std::clamp(ex, -1.0, 1.0);
+    double error_y = std::clamp(ey, -1.0, 1.0);
 
 
     // Deadband
@@ -589,100 +601,28 @@ private:
 
     // Target is already centered
 
-    if (
-      error_x == 0.0 &&
-      error_y == 0.0
-    )
+    if (error_x == 0.0 && error_y == 0.0)
     {
       RCLCPP_INFO_THROTTLE(
-        this->get_logger(),
-        *this->get_clock(),
-        2000,
-
-        "Target is inside deadband."
-      );
+        this->get_logger(), *this->get_clock(), 2000, "Target is inside deadband.");
 
       return;
     }
 
+// Calculate yaw delta
+   double yaw_delta = - yaw_kp_ * error_x;
 
-    // Calculate yaw delta
-
-    double yaw_delta = 0.0;
-
-    if (error_x > 0.0)
-    {
-      const double available =
-        yaw_max_ - current_yaw_;
-
-      yaw_delta =
-        error_x * available;
-    }
-    else if (error_x < 0.0)
-    {
-      const double available =
-        current_yaw_ - yaw_min_;
-
-      yaw_delta =
-        error_x * available;
-    }
-
-
-    // Calculate pitch delta
-
-    double pitch_delta = 0.0;
-
-    if (error_y > 0.0)
-    {
-      const double available =
-        pitch_max_ - current_pitch_;
-
-      pitch_delta =
-        error_y * available;
-    }
-    else if (error_y < 0.0)
-    {
-      const double available =
-        current_pitch_ - pitch_min_;
-
-      pitch_delta =
-        error_y * available;
-    }
-
+// Calculate pitch delta
+    double pitch_delta = -pitch_kp_ * error_y;
 
     // Limit movement per command
-
-    yaw_delta =
-      std::clamp(
-        yaw_delta,
-        -max_delta_tick_,
-        max_delta_tick_
-      );
-
-    pitch_delta =
-      std::clamp(
-        pitch_delta,
-        -max_delta_tick_,
-        max_delta_tick_
-      );
+    yaw_delta   = std::clamp(yaw_delta, -max_delta_tick_, max_delta_tick_);
+    pitch_delta = std::clamp(pitch_delta, -max_delta_tick_, max_delta_tick_);
 
 
     // Calculate absolute target position
-
-    const double target_yaw =
-      std::clamp(
-        current_yaw_ + yaw_delta,
-        yaw_min_,
-        yaw_max_
-      );
-
-    const double target_pitch =
-      std::clamp(
-        current_pitch_ + pitch_delta,
-        pitch_min_,
-        pitch_max_
-      );
-
+    const double target_yaw = std::clamp(current_yaw_ + yaw_delta, yaw_min_, yaw_max_);
+    const double target_pitch = std::clamp(current_pitch_ + pitch_delta, pitch_min_, pitch_max_);
 
     // Publish absolute motor position
 
@@ -690,16 +630,10 @@ private:
 
     command.data.resize(2);
 
-    command.data[0] =
-      target_yaw;
+    command.data[0] = target_yaw;
+    command.data[1] = target_pitch;
 
-    command.data[1] =
-      target_pitch;
-
-    command_pub_->publish(
-      command
-    );
-
+    command_pub_->publish(command);
 
     // Command debug
 
@@ -729,19 +663,10 @@ private:
 };
 
 
-int main(
-  int argc,
-  char ** argv
-)
+int main(int argc, char ** argv)
 {
-  rclcpp::init(
-    argc,
-    argv
-  );
-
-  rclcpp::spin(
-    std::make_shared<CenterNode>()
-  );
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<CenterNode>());
 
   rclcpp::shutdown();
 
