@@ -155,10 +155,68 @@ sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=tt
 
 ## OpenCR 업로드 (Raspberry Pi, SSH)
 
-    ssh <user>@<pi-host>
-    # 빌드 · 업로드 명령
+도구 설치는 위 [제어 (OpenCR · Arduino)](#제어-opencr--arduino) 절을 먼저 끝낸다.
+
+| 항목 | 값 |
+|---|---|
+| 스케치 폴더 | `firmware/<TBD 스케치 이름>/` (폴더 이름 = `.ino` 파일 이름) |
+| FQBN | `OpenCR:OpenCR:OpenCR` |
+| 포트 | `/dev/opencr` (udev 고정 이름) |
+| 시리얼 baud (RPi ↔ OpenCR) | <TBD — 펌웨어 `Serial.begin` 값과 같게> |
+| 통신 타임아웃 `TIMEOUT_MS` | <TBD> |
+
+### 1) 접속 · 코드 갱신
+
+```bash
+ssh <user>@<pi-host>
+cd ~/<사용자 폴더>/Lv2_Horus_Assignment   # 본인 clone 폴더, 공용 폴더 X
+git pull --ff-only
+```
+
+### 2) 장비 점유 확인 (하드웨어는 한 명씩)
+
+```bash
+ps -eo user,pid,etime,cmd | grep -E "ros2|arduino-cli" | grep -v grep
+fuser /dev/opencr
+```
+
+두 명령 모두 출력이 없어야 진행한다. 다른 사람 프로세스가 있으면 끝날 때까지 기다린다(종료시키지 않는다).
+
+### 3) 빌드
+
+```bash
+cd lv2_module5
+arduino-cli compile --fqbn OpenCR:OpenCR:OpenCR firmware/<TBD 스케치>
+```
+
+### 4) 업로드
+
+업로드 전에 제어 노드 · 시리얼 모니터가 꺼져 있는지 2)로 다시 확인한다.
+
+```bash
+arduino-cli upload -p /dev/opencr --fqbn OpenCR:OpenCR:OpenCR firmware/<TBD 스케치>
+```
+
+### 5) 시리얼 출력 확인
+
+```bash
+arduino-cli monitor -p /dev/opencr -c baudrate=<TBD>
+# 확인 후 Ctrl+C 로 반드시 닫는다 (제어 노드와 포트 동시 점유 금지)
+```
+
+| 확인 | 기준 |
+|---|---|
+| 상태 출력 | `S,<yaw>,<pitch>,<flag>` 줄이 주기적으로 나온다 (형식은 [인터페이스](#인터페이스) 시리얼 프로토콜) |
+| 통신 타임아웃 정지 | 명령 없이 `TIMEOUT_MS` 가 지나면 `flag` 가 정지(hold) 상태를 표시한다 |
+| 모터 설정 | ID 11 · 12, baud 1000000 이 장비 표와 같다 |
 
 업로드 중에는 시리얼 모니터를 닫는다. 제어 프로그램과 같은 포트를 동시에 점유하지 않는다.
+
+### 업로드 · 시리얼 확인 기록
+
+| 실행자 | 날짜 | 기준 커밋 | compile | upload | 시리얼 출력 (첫 줄) |
+|---|---|---|---|---|---|
+| | | | | | |
 
 ## 실행
 
@@ -174,28 +232,25 @@ sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=tt
 
 | 파일 | 바꾸는 값 |
 |---|---|
-| `config/vision.yaml` | HSV 범위, 최소 면적, 해상도 |
+| `config/perception.yaml` | HSV 범위, 최소 면적, 해상도 |
 | `config/control.yaml` | Kp, direction, speed_limit, 회전 범위, 데드밴드, 제어 주기 |
 | `config/safety.yaml` | 입력 타임아웃, 복귀 프레임 수, 상태 유예 |
 
 ## 인터페이스
 
-| 항목 | 규약 |
-|---|---|
-| 목표 토픽 | `/target` · `geometry_msgs/msg/PointStamped` |
-| `point.x` / `point.y` | 정규화 중심 오차 `ex` / `ey` (오른쪽 · 아래쪽 양수) |
-| `point.z` | 면적비. **`z=0` = 미검출** — 이때 x · y로 제어하지 않는다 |
-| `header.stamp` | 원본 영상 시각. 촬영 시각을 모르면 "영상 수신 시각"임을 명시 |
-| 발행 | 영상 처리마다. 정상 영상의 미검출도 `z=0`으로 발행 |
-| QoS | best-effort, depth 1 |
-| 상태 토픽 | `/tracking_status` · 값: `IDLE` `TRACKING` `LOST` |
-| 모터 명령 | <TBD — 위치 / 속도 방식 · 단위 · 부호 · 주기 · 정지 명령> |
-| 입력 타임아웃 | 0.5 s |
+| 발행 | 구독 | 토픽 | 타입 | 내용 | QoS | 근거 |
+|---|---|---|---|---|---|---|
+| 카메라 드라이버 | 인지 | `/camera/camera/color/image_raw` | `sensor_msgs/msg/Image` | 컬러 영상. stamp는 수신 시각임을 명시 | best-effort, 1 | 팀 |
+| 인지 | 판단 | `/target` | `geometry_msgs/msg/PointStamped` | 위 규약 표 | best-effort, 1 | **발제** |
+| 인지 | 기록용 | `/target_replay` | `geometry_msgs/msg/PointStamped` | bag 입력 재처리 출력. 저장된 `/target` 과 분리 | best-effort, 1 | 발제 (별도 토픽) |
+| 인지 | - | `/debug_image` | `sensor_msgs/msg/Image` | 컨투어 · 중심 오버레이 (표시용) | best-effort, 1 | 팀 |
+| 판단 | - | `/tracking_status` | `std_msgs/msg/String` | `IDLE` / `TRACKING` / `LOST` (선택 `SEARCHING`) | reliable, 10 | 토픽명 발제 예시, 타입 팀 |
+| 판단 | 제어 | `/motor_cmd` | `sensor_msgs/msg/JointState` | `name=[yaw, pitch]`, `position` = 목표 각도 [rad] | best-effort, 1 | 팀 |
+| 제어 | 판단 | `/motor_status` | `std_msgs/msg/String` | `OK` / `LIMIT` / `TIMEOUT_STOP` | reliable, 10 | 팀 |
+| 제어 | 판단 | `/motor_state` | `sensor_msgs/msg/JointState` | `position` = **실측** 각도 [rad] | best-effort, 1 | 팀 |
+| - | - | `/search` | action | 요청 · 진행 · 성공/실패 · 취소 | - | 발제 (선택) |
 
-    ex = (cx - W/2) / (W/2)
-    ey = (cy - H/2) / (H/2)
-    area_ratio = contour_area / (W * H)
-    command = clamp(direction * Kp * ex, -speed_limit, +speed_limit)   # 속도형 예
+`/target`, `/motor_*` 는 양쪽 모두 best-effort 로 맞춘다.
 
 ## bag 재현
 
