@@ -3,78 +3,46 @@
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <functional>
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
 
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <functional>
+#include <stdexcept>
+#include <string>
 
 class ControlNode : public rclcpp::Node
 {
 public:
-
   ControlNode()
   : Node("control_node")
   {
-    /*
-     * 현재 모터 위치
-     *
-     * 실제 OpenCR/Dynamixel에서 읽은 값을
-     * 이 변수에 넣으면 된다.
-     *
-     * 단위: rad
-     */
-    current_yaw_ = 0.0;
-    current_pitch_ = 0.0;
+    port_ = this->declare_parameter<std::string>(
+      "port",
+      "/dev/opencr"
+    );
 
+    baudrate_ = this->declare_parameter<int>(
+      "baudrate",
+      115200
+    );
 
-    /*
-     * 모터의 실제 허용 범위.
-     *
-     * controller는 계산하지 않는다.
-     *
-     * center_node에서 이미 계산된 delta를
-     * 받아서 실제 모터에 전달하는 역할만 한다.
-     *
-     * 단위: rad
-     */
-    yaw_min_ =
-      this->declare_parameter<double>(
-        "yaw_min",
-        -1.0
+    if (!openSerial())
+    {
+      RCLCPP_FATAL(
+        this->get_logger(),
+        "Failed to open serial port: %s",
+        port_.c_str()
       );
 
-    yaw_max_ =
-      this->declare_parameter<double>(
-        "yaw_max",
-        1.0
-      );
+      throw std::runtime_error("serial open failed");
+    }
 
-    pitch_min_ =
-      this->declare_parameter<double>(
-        "pitch_min",
-        -1.0
-      );
-
-    pitch_max_ =
-      this->declare_parameter<double>(
-        "pitch_max",
-        1.0
-      );
-
-
-    /*
-     * center_node가 보내는 명령
-     *
-     * data[0] = yaw delta
-     * data[1] = pitch delta
-     *
-     * 단위: rad
-     */
     command_sub_ =
-      this->create_subscription<
-        std_msgs::msg::Float64MultiArray
-      >(
+      this->create_subscription<std_msgs::msg::Float64MultiArray>(
         "/motor/command",
         10,
         std::bind(
@@ -84,24 +52,20 @@ public:
         )
       );
 
-
-    /*
-     * 현재 모터 상태
-     *
-     * x = yaw
-     * y = pitch
-     *
-     * center_node가 이 값을 받아서
-     * 다음 이동량을 계산한다.
-     */
     state_pub_ =
-      this->create_publisher<
-        geometry_msgs::msg::PointStamped
-      >(
+      this->create_publisher<geometry_msgs::msg::PointStamped>(
         "/motor/state",
         10
       );
 
+    serial_timer_ =
+      this->create_wall_timer(
+        std::chrono::milliseconds(10),
+        std::bind(
+          &ControlNode::pollSerial,
+          this
+        )
+      );
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -110,53 +74,27 @@ public:
 
     RCLCPP_INFO(
       this->get_logger(),
-      "Yaw range   : %.4f ~ %.4f rad",
-      yaw_min_,
-      yaw_max_
+      "Serial port: %s",
+      port_.c_str()
     );
 
     RCLCPP_INFO(
       this->get_logger(),
-      "Pitch range : %.4f ~ %.4f rad",
-      pitch_min_,
-      pitch_max_
+      "Baudrate: %d",
+      baudrate_
     );
-
-    RCLCPP_INFO(
-      this->get_logger(),
-      "Waiting for /motor/command"
-    );
-
-
-    /*
-     * 시작하자마자 현재 상태를 한 번 발행.
-     */
-    publishState();
   }
 
+  ~ControlNode()
+  {
+    if (serial_fd_ >= 0)
+    {
+      close(serial_fd_);
+      serial_fd_ = -1;
+    }
+  }
 
 private:
-
-  /*
-   * 현재 모터 위치
-   */
-  double current_yaw_;
-  double current_pitch_;
-
-
-  /*
-   * 모터 허용 범위
-   */
-  double yaw_min_;
-  double yaw_max_;
-
-  double pitch_min_;
-  double pitch_max_;
-
-
-  /*
-   * ROS
-   */
   rclcpp::Subscription<
     std_msgs::msg::Float64MultiArray
   >::SharedPtr command_sub_;
@@ -165,166 +103,294 @@ private:
     geometry_msgs::msg::PointStamped
   >::SharedPtr state_pub_;
 
+  rclcpp::TimerBase::SharedPtr serial_timer_;
 
-  /*
-   * center_node에서 명령 수신
-   */
+  int serial_fd_ = -1;
+
+  std::string port_;
+  int baudrate_ = 115200;
+
+  std::string rx_buffer_;
+
+private:
+  bool openSerial()
+  {
+    serial_fd_ = open(
+      port_.c_str(),
+      O_RDWR | O_NOCTTY | O_NONBLOCK
+    );
+
+    if (serial_fd_ < 0)
+    {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "open(%s) failed: errno=%d (%s)",
+        port_.c_str(),
+        errno,
+        std::strerror(errno)
+      );
+
+      return false;
+    }
+
+    struct termios tty {};
+
+    if (tcgetattr(serial_fd_, &tty) != 0)
+    {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "tcgetattr() failed: errno=%d (%s)",
+        errno,
+        std::strerror(errno)
+      );
+
+      close(serial_fd_);
+      serial_fd_ = -1;
+      return false;
+    }
+
+    cfmakeraw(&tty);
+
+    speed_t speed;
+
+    switch (baudrate_)
+    {
+      case 115200:
+        speed = B115200;
+        break;
+
+      default:
+        RCLCPP_ERROR(
+          this->get_logger(),
+          "Unsupported baudrate: %d",
+          baudrate_
+        );
+
+        close(serial_fd_);
+        serial_fd_ = -1;
+        return false;
+    }
+
+    cfsetispeed(&tty, speed);
+    cfsetospeed(&tty, speed);
+
+    tty.c_cflag |= CLOCAL;
+    tty.c_cflag |= CREAD;
+
+    if (tcsetattr(serial_fd_, TCSANOW, &tty) != 0)
+    {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "tcsetattr() failed: errno=%d (%s)",
+        errno,
+        std::strerror(errno)
+      );
+
+      close(serial_fd_);
+      serial_fd_ = -1;
+      return false;
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Serial connected."
+    );
+
+    return true;
+  }
+
   void commandCallback(
     const std_msgs::msg::Float64MultiArray::SharedPtr msg
   )
   {
-    /*
-     * 잘못된 command 방지
-     */
     if (msg->data.size() < 2)
     {
       RCLCPP_WARN(
         this->get_logger(),
-        "/motor/command requires 2 values: "
-        "[yaw_delta, pitch_delta]"
+        "Need [yaw,pitch]"
       );
 
       return;
     }
 
+    const int yaw =
+      static_cast<int>(msg->data[0]);
 
-    /*
-     * center_node가 계산한 상대 이동량.
-     *
-     * 여기서는 계산하지 않는다.
-     */
-    const double yaw_delta =
-      msg->data[0];
+    const int pitch =
+      static_cast<int>(msg->data[1]);
 
-    const double pitch_delta =
-      msg->data[1];
+    char line[64];
 
+    std::snprintf(
+      line,
+      sizeof(line),
+      "G,%d,%d\n",
+      yaw,
+      pitch
+    );
 
-    /*
-     * NaN / Inf 방지
-     */
+    if (serial_fd_ >= 0)
+    {
+      const ssize_t written =
+        write(
+          serial_fd_,
+          line,
+          std::strlen(line)
+        );
+
+      if (written < 0)
+      {
+        RCLCPP_WARN(
+          this->get_logger(),
+          "Serial write failed: errno=%d (%s)",
+          errno,
+          std::strerror(errno)
+        );
+
+        return;
+      }
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "TX: %s",
+      line
+    );
+  }
+
+  void pollSerial()
+  {
+    if (serial_fd_ < 0)
+    {
+      return;
+    }
+
+    char buf[256];
+
+    const int n =
+      read(
+        serial_fd_,
+        buf,
+        sizeof(buf) - 1
+      );
+
+    if (n < 0)
+    {
+      if (errno != EAGAIN && errno != EWOULDBLOCK)
+      {
+        RCLCPP_WARN(
+          this->get_logger(),
+          "Serial read failed: errno=%d (%s)",
+          errno,
+          std::strerror(errno)
+        );
+      }
+
+      return;
+    }
+
+    if (n == 0)
+    {
+      return;
+    }
+
+    buf[n] = '\0';
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "RAW RX [%d bytes]: %s",
+      n,
+      buf
+    );
+
+    rx_buffer_ += buf;
+
+    size_t pos;
+
+    while (
+      (pos = rx_buffer_.find('\n'))
+      != std::string::npos
+    )
+    {
+      std::string line =
+        rx_buffer_.substr(0, pos);
+
+      rx_buffer_.erase(
+        0,
+        pos + 1
+      );
+
+      if (!line.empty() && line.back() == '\r')
+      {
+        line.pop_back();
+      }
+
+      parseStatus(line);
+    }
+  }
+
+  void parseStatus(
+    const std::string & line
+  )
+  {
+    int yaw;
+    int pitch;
+    int flags;
+
     if (
-      !std::isfinite(yaw_delta) ||
-      !std::isfinite(pitch_delta)
+      std::sscanf(
+        line.c_str(),
+        "S,%d,%d,%d",
+        &yaw,
+        &pitch,
+        &flags
+      ) != 3
     )
     {
       RCLCPP_WARN(
         this->get_logger(),
-        "Invalid motor command: NaN or Inf"
+        "Invalid status: [%s]",
+        line.c_str()
       );
 
       return;
     }
 
+    geometry_msgs::msg::PointStamped msg;
 
-    /*
-     * center_node에서 이미 계산한
-     * 상대 이동량을 현재 위치에 적용한다.
-     */
-    double target_yaw =
-      current_yaw_ + yaw_delta;
+    msg.header.stamp =
+      this->get_clock()->now();
 
-    double target_pitch =
-      current_pitch_ + pitch_delta;
+    msg.header.frame_id =
+      "motor";
 
+    msg.point.x =
+      static_cast<double>(yaw);
 
-    /*
-     * 최종 모터 범위 보호.
-     *
-     * 이것은 제어 계산이 아니라
-     * 하드웨어 안전 보호이다.
-     */
-    target_yaw =
-      std::clamp(
-        target_yaw,
-        yaw_min_,
-        yaw_max_
-      );
+    msg.point.y =
+      static_cast<double>(pitch);
 
-    target_pitch =
-      std::clamp(
-        target_pitch,
-        pitch_min_,
-        pitch_max_
-      );
+    msg.point.z =
+      static_cast<double>(flags);
 
-
-    /*
-     * 실제 모터 명령 부분.
-     *
-     * 현재는 테스트를 위해
-     * 내부 상태만 갱신한다.
-     *
-     * 나중에 이 부분에
-     * OpenCR/Dynamixel 명령을 넣으면 된다.
-     */
-    current_yaw_ =
-      target_yaw;
-
-    current_pitch_ =
-      target_pitch;
-
-
-    /*
-     * 현재 모터 상태를 center_node로 전달.
-     */
-    publishState();
-
+    state_pub_->publish(msg);
 
     RCLCPP_INFO(
       this->get_logger(),
-      "Command received | "
-      "delta yaw=%.4f pitch=%.4f | "
-      "state yaw=%.4f pitch=%.4f",
-
-      yaw_delta,
-      pitch_delta,
-
-      current_yaw_,
-      current_pitch_
+      "RX: yaw=%d pitch=%d flags=%d",
+      yaw,
+      pitch,
+      flags
     );
   }
-
-
-  /*
-   * /motor/state 발행
-   *
-   * x = current yaw
-   * y = current pitch
-   */
-  void publishState()
-  {
-    geometry_msgs::msg::PointStamped state;
-
-    state.header.stamp =
-      this->get_clock()->now();
-
-    state.header.frame_id =
-      "motor";
-
-    state.point.x =
-      current_yaw_;
-
-    state.point.y =
-      current_pitch_;
-
-    state.point.z =
-      0.0;
-
-    state_pub_->publish(state);
-  }
 };
-
 
 int main(
   int argc,
   char ** argv
 )
 {
-  rclcpp::init(
-    argc,
-    argv
-  );
+  rclcpp::init(argc, argv);
 
   rclcpp::spin(
     std::make_shared<ControlNode>()
