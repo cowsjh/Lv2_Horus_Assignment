@@ -23,11 +23,9 @@ else()
   set(YAML_CPP_TARGET yaml-cpp)
 endif()
 
-# 검출 라이브러리: 설정·검출·오버레이·일괄 검출 (ROS 의존 없음)
+# 검출 라이브러리: 설정·검출·오버레이 (ROS 의존 없음)
 add_library(perception_core STATIC
   src/detector.cpp
-  src/overlay.cpp
-  src/batch.cpp
 )
 set_target_properties(perception_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(perception_core PUBLIC
@@ -50,11 +48,16 @@ target_link_libraries(perception_node
   ${geometry_msgs_TARGETS}
 )
 
-# 저장 이미지·영상 일괄 검출 명령 (ROS 없이 동작)
-add_executable(batch_detect src/batch_detect_main.cpp)
-target_link_libraries(batch_detect perception_core)
+install(TARGETS perception_node DESTINATION lib/${PROJECT_NAME})
 
-install(TARGETS perception_node batch_detect DESTINATION lib/${PROJECT_NAME})
+# 로컬 전용 도구 (저장소에 올리지 않음): 파일이 있을 때만 빌드
+#   batch_detect : 저장 이미지·영상 일괄 검출 -> 원본·마스크·오버레이·CSV
+set(BATCH_DETECT_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/batch_detect.cpp)
+if(EXISTS ${BATCH_DETECT_SOURCE})
+  add_executable(batch_detect ${BATCH_DETECT_SOURCE})
+  target_link_libraries(batch_detect perception_core)
+  install(TARGETS batch_detect DESTINATION lib/${PROJECT_NAME})
+endif()
 install(TARGETS perception_core EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -67,15 +70,15 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../../config/perception.yaml
   DESTINATION share/${PROJECT_NAME}/config
 )
 
-if(BUILD_TESTING)
+# 로컬 전용 시험 (저장소에 올리지 않음): 시험 파일과 batch_detect 가 있을 때만 빌드
+set(TEST_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/test/test_perception.cpp)
+if(BUILD_TESTING AND EXISTS ${TEST_SOURCE} AND EXISTS ${BATCH_DETECT_SOURCE})
   find_package(ament_cmake_gtest REQUIRED)
-  ament_add_gtest(test_perception
-    test/test_detector.cpp
-    test/test_batch.cpp
-  )
+  ament_add_gtest(test_perception ${TEST_SOURCE} ${BATCH_DETECT_SOURCE})
   target_link_libraries(test_perception perception_core)
-  # 팀 설정 파일(lv2_module5/config/perception.yaml)로 시험
   target_compile_definitions(test_perception PRIVATE
+    PERCEPTION_BATCH_NO_MAIN
+    # 팀 설정 파일(lv2_module5/config/perception.yaml)로 시험
     PERCEPTION_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/perception.yaml"
   )
 endif()

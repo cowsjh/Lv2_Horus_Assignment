@@ -3,6 +3,9 @@
 // 구독
 //   <image_topic>         sensor_msgs/msg/Image   D435 color, rgb8
 //                         (기본 /camera/camera/color/image_raw)
+//   <depth_topic>         sensor_msgs/msg/Image   color 에 정렬된 depth, 16UC1(mm)
+//                         perception.yaml 의 max_distance_m 이 있을 때만 구독
+//                         (기본 /camera/camera/aligned_depth_to_color/image_raw)
 //
 // 발행
 //   /target               geometry_msgs/msg/PointStamped
@@ -22,6 +25,7 @@
 //                             (install/perception/share/perception/config/perception.yaml)
 //                             ~ 로 시작하면 홈 폴더 기준으로 바꿔 읽음
 //   image_topic               구독할 color 토픽
+//   depth_topic               구독할 정렬 depth 토픽 (max_distance_m 이 있을 때만 사용)
 //   publish_debug_image       오버레이 영상 발행 여부 (처리 FPS 측정 시에는 false)
 //   publish_debug_mask        마스크 영상 발행 여부 (처리 FPS 측정 시에는 false)
 //   debug_image_every_n       디버그 영상(오버레이·마스크)을 n 프레임마다 한 번 발행
@@ -34,6 +38,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -49,7 +54,6 @@
 #include <sensor_msgs/msg/image.hpp>
 
 #include "perception/detector.hpp"
-#include "perception/overlay.hpp"
 
 namespace perception
 {
@@ -58,7 +62,11 @@ using geometry_msgs::msg::PointStamped;
 using sensor_msgs::msg::Image;
 
 constexpr char kDefaultImageTopic[] = "/camera/camera/color/image_raw";
+constexpr char kDefaultDepthTopic[] = "/camera/camera/aligned_depth_to_color/image_raw";
 constexpr int kWarnThrottleMs = 5000;
+
+// color 와 depth 의 stamp 차이가 이 안이면 같은 장면으로 봄 (30 fps 기준 약 1.5 프레임)
+constexpr double kDepthMaxGapSec = 0.05;
 
 // 발제 기본 QoS: best-effort, depth 1
 rclcpp::QoS target_qos()
@@ -127,6 +135,7 @@ public:
     detector_(load_config(config_source_.path.string()))
   {
     const auto image_topic = declare_parameter<std::string>("image_topic", kDefaultImageTopic);
+    const auto depth_topic = declare_parameter<std::string>("depth_topic", kDefaultDepthTopic);
     const bool publish_debug_image = declare_parameter<bool>("publish_debug_image", false);
     const bool publish_debug_mask = declare_parameter<bool>("publish_debug_mask", false);
     debug_every_n_ = std::max<int64_t>(1, declare_parameter<int64_t>("debug_image_every_n", 1));
@@ -145,6 +154,13 @@ public:
       image_topic, rclcpp::SensorDataQoS(),
       [this](const Image::ConstSharedPtr msg) {on_image(msg);});
 
+    // 거리 필터를 쓸 때만 depth 구독, 가장 최근 depth 한 장만 보관
+    if (detector_.config().uses_depth()) {
+      depth_sub_ = create_subscription<Image>(
+        depth_topic, rclcpp::SensorDataQoS(),
+        [this](const Image::ConstSharedPtr msg) {latest_depth_ = msg;});
+    }
+
     stats_start_ = std::chrono::steady_clock::now();
     if (stats_period_sec > 0.0) {
       stats_timer_ = create_wall_timer(
@@ -158,6 +174,9 @@ public:
       get_logger(), "설정: %s (%s)", describe_config_path(config_source_.path).c_str(),
       config_source_.from_parameter ? "config_path 지정" : "기본값");
     RCLCPP_INFO(get_logger(), "검출 설정: %s", describe(detector_.config()).c_str());
+    if (depth_sub_) {
+      RCLCPP_INFO(get_logger(), "depth: %s", depth_topic.c_str());
+    }
   }
 
 private:
@@ -177,7 +196,7 @@ private:
       return;
     }
 
-    const Detection detection = detector_.process_debug(bgr->image);
+    const Detection detection = detector_.process_debug(bgr->image, matching_depth(msg->header));
 
     publish_target(msg->header, detection.result);
 
@@ -188,6 +207,30 @@ private:
     if (debug_frame && mask_pub_) {
       publish_mask(msg->header, detection);
     }
+  }
+
+  // color 와 시각이 가까운 depth (16UC1), 없거나 변환 실패면 빈 Mat (거리 필터 없이 진행)
+  cv::Mat matching_depth(const std_msgs::msg::Header & color_header)
+  {
+    if (!depth_sub_) {
+      return cv::Mat();
+    }
+    if (latest_depth_) {
+      const rclcpp::Time color_time(color_header.stamp);
+      const rclcpp::Time depth_time(latest_depth_->header.stamp);
+      const double gap = std::abs((color_time - depth_time).seconds());
+      if (gap <= kDepthMaxGapSec) {
+        try {
+          const auto encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+          return cv_bridge::toCvShare(latest_depth_, encoding)->image;
+        } catch (const cv_bridge::Exception & error) {
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), kWarnThrottleMs, "depth 변환 실패: %s", error.what());
+        }
+      }
+    }
+    ++stats_.no_depth;
+    return cv::Mat();
   }
 
   void publish_target(const std_msgs::msg::Header & header, const TargetResult & result)
@@ -234,9 +277,15 @@ private:
     const auto now = std::chrono::steady_clock::now();
     const double elapsed = std::chrono::duration<double>(now - stats_start_).count();
     const double fps = elapsed > 0.0 ? stats_.processed / elapsed : 0.0;
-    RCLCPP_INFO(
-      get_logger(), "처리 %d프레임 (%.1f FPS), 검출 %d, 발행 안 함 %d",
-      stats_.processed, fps, stats_.detected, stats_.skipped);
+    if (depth_sub_) {
+      RCLCPP_INFO(
+        get_logger(), "처리 %d프레임 (%.1f FPS), 검출 %d, 발행 안 함 %d, depth 없음 %d",
+        stats_.processed, fps, stats_.detected, stats_.skipped, stats_.no_depth);
+    } else {
+      RCLCPP_INFO(
+        get_logger(), "처리 %d프레임 (%.1f FPS), 검출 %d, 발행 안 함 %d",
+        stats_.processed, fps, stats_.detected, stats_.skipped);
+    }
     stats_ = Stats{};
     stats_start_ = now;
   }
@@ -246,6 +295,7 @@ private:
     int processed = 0;
     int detected = 0;
     int skipped = 0;
+    int no_depth = 0;   // 짝이 맞는 depth 가 없어 거리 필터 없이 처리한 프레임
   };
 
   ConfigSource config_source_;   // detector_ 보다 먼저 초기화되어야 한다 (선언 순서)
@@ -259,6 +309,8 @@ private:
   rclcpp::Publisher<Image>::SharedPtr overlay_pub_;
   rclcpp::Publisher<Image>::SharedPtr mask_pub_;
   rclcpp::Subscription<Image>::SharedPtr image_sub_;
+  rclcpp::Subscription<Image>::SharedPtr depth_sub_;
+  Image::ConstSharedPtr latest_depth_;
   rclcpp::TimerBase::SharedPtr stats_timer_;
 };
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <sstream>
@@ -21,6 +22,7 @@ constexpr std::array<int, 3> kHsvMax = {179, 255, 255};  // OpenCV HSV 최댓값
 // perception.yaml detector 섹션에 쓸 수 있는 키, 그 외 키는 오타로 보고 거부
 const std::set<std::string> kKnownKeys = {
   "hsv_ranges", "min_area_px", "blur_ksize", "morph_kernel", "bbox_style", "resize_width",
+  "max_distance_m", "min_fill_ratio",
 };
 
 std::array<int, 3> read_hsv_triplet(const YAML::Node & node, const std::string & name)
@@ -80,6 +82,12 @@ DetectorConfig config_from_yaml(const YAML::Node & root)
   if (section["resize_width"] && !section["resize_width"].IsNull()) {
     config.resize_width = section["resize_width"].as<int>();
   }
+  if (section["max_distance_m"] && !section["max_distance_m"].IsNull()) {
+    config.max_distance_m = section["max_distance_m"].as<double>();
+  }
+  if (section["min_fill_ratio"] && !section["min_fill_ratio"].IsNull()) {
+    config.min_fill_ratio = section["min_fill_ratio"].as<double>();
+  }
 
   config.validate();
   return config;
@@ -116,6 +124,12 @@ void DetectorConfig::validate() const
   }
   if (resize_width != 0 && resize_width < 16) {
     throw std::invalid_argument("resize_width 는 0(끔) 또는 16 이상이어야 합니다.");
+  }
+  if (max_distance_m < 0.0) {
+    throw std::invalid_argument("max_distance_m 는 null(끔) 또는 0 보다 커야 합니다.");
+  }
+  if (min_fill_ratio < 0.0 || min_fill_ratio > 1.0) {
+    throw std::invalid_argument("min_fill_ratio 는 null(끔) 또는 0~1 이어야 합니다.");
   }
 }
 
@@ -160,6 +174,16 @@ std::string describe(const DetectorConfig & config)
        << ", min_area " << config.min_area_px << "px"
        << ", bbox " << to_string(config.bbox_style)
        << ", resize " << (config.resize_width > 0 ? std::to_string(config.resize_width) : "원본");
+  if (config.uses_depth()) {
+    text << ", max_distance " << config.max_distance_m << "m";
+  } else {
+    text << ", depth 끔";
+  }
+  if (config.min_fill_ratio > 0.0) {
+    text << ", min_fill " << config.min_fill_ratio;
+  } else {
+    text << ", fill 끔";
+  }
   return text.str();
 }
 
@@ -234,18 +258,37 @@ TargetResult TargetResult::invalid(int width, int height, std::string reason)
 // 3. 검출
 // ---------------------------------------------------------------------------
 
+namespace
+{
+
+// depth 를 처리 프레임 크기에 맞춤 (리사이즈했거나 크기가 다르면 최근접 보간), 쓸 수 없으면 빈 Mat
+cv::Mat fit_depth_to_frame(const cv::Mat & depth, const cv::Size & frame_size)
+{
+  if (depth.empty() || depth.type() != CV_16UC1) {
+    return cv::Mat();
+  }
+  if (depth.size() == frame_size) {
+    return depth;
+  }
+  cv::Mat resized;
+  cv::resize(depth, resized, frame_size, 0, 0, cv::INTER_NEAREST);
+  return resized;
+}
+
+}  // namespace
+
 TargetDetector::TargetDetector(DetectorConfig config)
 : config_(std::move(config))
 {
   config_.validate();
 }
 
-TargetResult TargetDetector::process(const cv::Mat & bgr) const
+TargetResult TargetDetector::process(const cv::Mat & bgr, const cv::Mat & depth) const
 {
-  return process_debug(bgr).result;
+  return process_debug(bgr, depth).result;
 }
 
-Detection TargetDetector::process_debug(const cv::Mat & bgr) const
+Detection TargetDetector::process_debug(const cv::Mat & bgr, const cv::Mat & depth) const
 {
   // 1. 프레임 검사
   const std::string problem = validate_bgr(bgr);
@@ -262,8 +305,12 @@ Detection TargetDetector::process_debug(const cv::Mat & bgr) const
   cv::Mat mask = hsv_mask(frame, config_.hsv_ranges, config_.blur_ksize);
   mask = clean_mask(mask, config_.morph_kernel);
 
-  // 5~6. 후보 측정과 필터
-  auto [accepted, rejected] = find_candidates(mask);
+  // 5~6. 후보 측정과 필터 (depth 를 쓰면 처리 프레임 크기에 맞춤)
+  cv::Mat frame_depth;
+  if (config_.uses_depth()) {
+    frame_depth = fit_depth_to_frame(depth, frame.size());
+  }
+  auto [accepted, rejected] = find_candidates(mask, frame_depth);
 
   // 7. 목표 선택
   const auto target = select_target(accepted);
@@ -278,7 +325,7 @@ Detection TargetDetector::process_debug(const cv::Mat & bgr) const
 }
 
 std::pair<std::vector<Candidate>, std::vector<Candidate>>
-TargetDetector::find_candidates(const cv::Mat & mask) const
+TargetDetector::find_candidates(const cv::Mat & mask, const cv::Mat & depth) const
 {
   std::vector<std::vector<cv::Point>> contours;
   cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -290,7 +337,11 @@ TargetDetector::find_candidates(const cv::Mat & mask) const
     if (!candidate) {
       continue;
     }
+    if (!depth.empty()) {
+      candidate->distance_m = depth_at(depth, candidate->cx, candidate->cy);
+    }
     candidate->reject = reject_reason(*candidate, config_);
+    candidate->reject_label = reject_label(*candidate, config_);
     if (candidate->reject.empty()) {
       accepted.push_back(std::move(*candidate));
     } else {
@@ -322,6 +373,8 @@ TargetResult TargetDetector::build_result(const Candidate & target, int width, i
   result.ey = ey;
   result.area_px = target.area_px;
   result.area_ratio = ratio;
+  result.distance_m = target.distance_m;
+  result.fill_ratio = target.fill_ratio;
   result.contour = target.contour;
   result.bbox = target.bbox;
   return result;
@@ -411,6 +464,13 @@ BoundingBox bounding_box(const std::vector<cv::Point> & contour, BboxStyle style
   return {rect.center.x, rect.center.y, corners};
 }
 
+double fill_ratio(const std::vector<cv::Point> & contour, double area_px)
+{
+  const cv::Size2f size = cv::minAreaRect(contour).size;
+  const double rect_area = static_cast<double>(size.width) * size.height;
+  return rect_area > 0.0 ? area_px / rect_area : 0.0;
+}
+
 std::optional<Candidate> measure_contour(const std::vector<cv::Point> & contour, BboxStyle style)
 {
   const double area = cv::contourArea(contour);
@@ -422,6 +482,7 @@ std::optional<Candidate> measure_contour(const std::vector<cv::Point> & contour,
   Candidate candidate;
   candidate.contour = contour;
   candidate.area_px = area;
+  candidate.fill_ratio = fill_ratio(contour, area);
   candidate.cx = box.cx;
   candidate.cy = box.cy;
   candidate.bbox = std::move(box.corners);
@@ -433,7 +494,53 @@ std::string reject_reason(const Candidate & candidate, const DetectorConfig & co
   if (candidate.area_px < config.min_area_px) {
     return "too_small";
   }
+  // depth 가 없거나 측정 실패(NaN)면 거리로 제외하지 않음
+  if (config.uses_depth() && std::isfinite(candidate.distance_m) &&
+    candidate.distance_m > config.max_distance_m)
+  {
+    return "too_far";
+  }
+  if (candidate.fill_ratio < config.min_fill_ratio) {
+    return "not_box";
+  }
   return "";
+}
+
+std::string reject_label(const Candidate & candidate, const DetectorConfig & config)
+{
+  const std::string reason = reject_reason(candidate, config);
+  if (reason != "not_box") {
+    return reason;
+  }
+  char buffer[48];
+  std::snprintf(
+    buffer, sizeof(buffer), "fill=%.2f<%.2f", candidate.fill_ratio, config.min_fill_ratio);
+  return buffer;
+}
+
+double depth_at(const cv::Mat & depth, double x, double y)
+{
+  if (depth.empty() || depth.type() != CV_16UC1) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  const int half = kDepthWindow / 2;
+  const int cx = static_cast<int>(std::lround(x));
+  const int cy = static_cast<int>(std::lround(y));
+
+  std::vector<uint16_t> valid;
+  for (int row = std::max(cy - half, 0); row <= std::min(cy + half, depth.rows - 1); ++row) {
+    for (int col = std::max(cx - half, 0); col <= std::min(cx + half, depth.cols - 1); ++col) {
+      const uint16_t value = depth.at<uint16_t>(row, col);
+      if (value > 0) {  // 0 = 측정 실패
+        valid.push_back(value);
+      }
+    }
+  }
+  if (valid.empty()) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  std::nth_element(valid.begin(), valid.begin() + valid.size() / 2, valid.end());
+  return valid[valid.size() / 2] * kDepthScale;
 }
 
 std::optional<Candidate> select_target(const std::vector<Candidate> & candidates)
@@ -475,6 +582,108 @@ std::string rejection_summary(const std::vector<Candidate> & rejected)
     first = false;
   }
   return summary.str();
+}
+
+// ---------------------------------------------------------------------------
+// 4. 오버레이
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+// BGR 색
+const cv::Scalar kGreen(0, 200, 0);
+const cv::Scalar kOrange(0, 200, 255);
+const cv::Scalar kRed(0, 0, 255);
+const cv::Scalar kGray(160, 160, 160);
+const cv::Scalar kWhite(255, 255, 255);
+const cv::Scalar kBlack(0, 0, 0);
+
+constexpr int kFont = cv::FONT_HERSHEY_SIMPLEX;
+
+cv::Scalar status_color(TargetStatus status)
+{
+  switch (status) {
+    case TargetStatus::Detected:
+      return kGreen;
+    case TargetStatus::NoTarget:
+      return kOrange;
+    case TargetStatus::Invalid:
+      return kRed;
+  }
+  return kRed;
+}
+
+// 검은 배경 박스 위에 글자 쓰기
+void draw_label(
+  cv::Mat & canvas, const std::string & text, cv::Point origin, const cv::Scalar & color,
+  double scale = 0.6)
+{
+  int baseline = 0;
+  const cv::Size size = cv::getTextSize(text, kFont, scale, 1, &baseline);
+  cv::rectangle(
+    canvas,
+    cv::Point(origin.x - 4, origin.y - size.height - 6),
+    cv::Point(origin.x + size.width + 4, origin.y + baseline + 2),
+    kBlack, cv::FILLED);
+  cv::putText(canvas, text, origin, kFont, scale, color, 1, cv::LINE_AA);
+}
+
+cv::Point to_pixel(double x, double y)
+{
+  return {static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y))};
+}
+
+void draw_target(
+  cv::Mat & canvas, const TargetResult & result, cv::Point image_center, const cv::Scalar & color)
+{
+  if (!result.bbox.empty()) {
+    std::vector<cv::Point> corners;
+    for (const auto & corner : result.bbox) {
+      corners.push_back(to_pixel(corner.x, corner.y));
+    }
+    cv::polylines(canvas, corners, true, color, 2);
+  }
+
+  const cv::Point target_center = to_pixel(result.cx, result.cy);
+  cv::circle(canvas, target_center, 6, color, cv::FILLED);
+  cv::line(canvas, image_center, target_center, color, 1);
+}
+
+}  // namespace
+
+cv::Mat draw_overlay(
+  const cv::Mat & frame, const TargetResult & result, const std::vector<Candidate> & rejected)
+{
+  cv::Mat canvas = frame.clone();
+  const cv::Point image_center(canvas.cols / 2, canvas.rows / 2);
+
+  for (const auto & candidate : rejected) {
+    cv::drawContours(canvas, std::vector<std::vector<cv::Point>>{candidate.contour}, -1, kGray, 1);
+    draw_label(canvas, candidate.reject_label, to_pixel(candidate.cx, candidate.cy), kGray, 0.45);
+  }
+
+  cv::drawMarker(canvas, image_center, kWhite, cv::MARKER_CROSS, 20, 2);
+
+  const cv::Scalar color = status_color(result.status);
+  std::string text;
+  if (result.detected()) {
+    draw_target(canvas, result, image_center, color);
+    char buffer[96];
+    std::snprintf(
+      buffer, sizeof(buffer), "ex=%+.3f ey=%+.3f area=%.4f fill=%.2f",
+      result.ex, result.ey, result.area_ratio, result.fill_ratio);
+    text = buffer;
+    if (std::isfinite(result.distance_m)) {
+      std::snprintf(buffer, sizeof(buffer), " d=%.2fm", result.distance_m);
+      text += buffer;
+    }
+  } else {
+    text = to_string(result.status) + ": " + result.reason;
+  }
+
+  draw_label(canvas, text, cv::Point(10, 24), color);
+  return canvas;
 }
 
 }  // namespace perception

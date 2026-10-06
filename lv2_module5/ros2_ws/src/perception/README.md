@@ -1,27 +1,19 @@
 # perception — 인지 모듈 (C++)
 
 RealSense D435 color 프레임에서 **파란색 단일 목표**를 HSV·Contour로 찾아 `/target`에 넣을 `(x, y, z)` 값을 만듭니다.
-검출 로직은 ROS에 의존하지 않는 라이브러리(`perception_core`)이고, 같은 라이브러리를 두 실행 파일이 사용합니다.
-
-- **`perception_node`**: D435 color 토픽을 구독해 `/target`을 발행하는 ROS2 노드
-- **`batch_detect`**: 저장한 이미지·영상을 일괄 검출해 마스크·오버레이·CSV를 남기는 명령 (HSV 튜닝, 문제 1 결과물, 검출률 판정)
+검출 로직은 ROS에 의존하지 않는 라이브러리(`perception_core`)이고, **`perception_node`** 가 D435 color 토픽을 구독해 이 라이브러리로 `/target`을 발행합니다.
 
 ## 구조
 
 ```
 lv2_module5/
-├── config/perception.yaml                 # HSV 범위·면적·모폴로지·선택 규칙 (튜닝 대상)
+├── config/perception.yaml                 # HSV 범위·면적·blur·morph·bbox (튜닝 대상)
 └── ros2_ws/src/perception/                # ament_cmake 패키지
     ├── CMakeLists.txt · package.xml
-    ├── include/perception/
-    │   ├── detector.hpp     # 설정·결과 판정(0/NaN)·HSV/bbox 검출 (ROS 의존 없음)
-    │   ├── overlay.hpp      # 검출 결과 오버레이 (/target/debug_image, *_overlay.png 공용)
-    │   └── batch.hpp        # 이미지·영상 일괄 검출 -> results/images/, results/logs/
-    ├── src/
-    │   ├── detector.cpp · overlay.cpp · batch.cpp   # perception_core 라이브러리
-    │   ├── perception_node.cpp                      # ROS2 노드: color 구독 -> /target 발행
-    │   └── batch_detect_main.cpp                    # batch_detect 명령
-    └── test/test_detector.cpp · test_batch.cpp      # gtest
+    ├── include/perception/detector.hpp    # 설정·결과 판정(0/NaN)·검출·오버레이 선언 (ROS 의존 없음)
+    └── src/
+        ├── detector.cpp                   # perception_core 라이브러리: 검출 + 오버레이
+        └── perception_node.cpp            # ROS2 노드: color 구독 -> /target 발행
 ```
 
 ## 의존성
@@ -32,7 +24,7 @@ lv2_module5/
 | `cv_bridge` | `sensor_msgs/Image`(rgb8 등) ↔ OpenCV BGR 변환 |
 | `libopencv-dev` (apt) | 검출. C++은 pip `opencv-python`을 쓸 수 없으므로 apt OpenCV를 사용 |
 | `yaml-cpp` | `perception.yaml` 읽기 |
-| `ament_cmake_gtest` | 시험 |
+| `ament_index_cpp` | 설치된 기본 설정 파일 위치 찾기 |
 
 `ros2_ws`에서 한 번에 설치:
 
@@ -40,7 +32,7 @@ lv2_module5/
 rosdep install --from-paths src -y --ignore-src
 ```
 
-## 빌드·시험
+## 빌드
 
 `lv2_module5/ros2_ws`에서:
 
@@ -51,10 +43,6 @@ colcon build --symlink-install --packages-select perception --cmake-args -DCMAKE
 `--symlink-install`을 권장합니다. 노드의 기본 설정(`install/perception/share/perception/config/perception.yaml`)이
 `lv2_module5/config/perception.yaml` 원본 링크가 되어, yaml을 고치면 다시 빌드하지 않아도 반영됩니다.
 이 옵션 없이 빌드하면 빌드 시점의 복사본을 읽으므로 yaml 수정 후 다시 빌드해야 합니다.
-
-```bash
-colcon test --packages-select perception && colcon test-result --verbose
-```
 
 ```bash
 source install/setup.bash
@@ -79,7 +67,7 @@ source install/setup.bash
 | 2. 리사이즈 | 폭 기준, 높이는 비율 유지 | `resize_width` (`null` = 그대로) |
 | 3. HSV 마스크 | 가우시안 블러 → HSV → `inRange` | `blur_ksize` (0 = 끔), `hsv_ranges` |
 | 4. 마스크 정리 | open 1회(점 잡음 제거) → close 2회(구멍 메우기), 횟수는 코드 고정값 | `morph_kernel` |
-| 5~6. 후보 측정·필터 | 컨투어별 면적·bbox 중심, 작은 후보 제외(`too_small`) | `min_area_px`, `bbox_style` |
+| 5~6. 후보 측정·필터 | 컨투어별 면적·bbox 중심, 작은 후보 제외(`too_small`), depth 사용 시 먼 후보 제외(`too_far`), 채움률(면적 / 회전 bbox 면적)이 낮은 후보 제외(`not_box`) | `min_area_px`, `bbox_style`, `max_distance_m`, `min_fill_ratio` |
 | 7. 목표 선택 | 남은 후보 중 면적이 가장 큰 것 (고정) | — |
 | 8. 결과 계산 | 정규화 오차·면적비 | — |
 
@@ -104,6 +92,7 @@ source install/setup.bash
 | 구분 | 토픽 | 타입 | 내용 |
 | --- | --- | --- | --- |
 | 구독 | `image_topic` (기본 `/camera/camera/color/image_raw`) | `sensor_msgs/msg/Image` | D435 color. `cv_bridge`로 BGR 변환 후 검출. QoS sensor data(best-effort) |
+| 구독 (선택) | `depth_topic` (기본 `/camera/camera/aligned_depth_to_color/image_raw`) | `sensor_msgs/msg/Image` (16UC1, mm) | color에 정렬된 depth. `max_distance_m`이 있을 때만 구독, stamp 차이 50 ms 이내만 사용 |
 | 발행 | `/target` | `geometry_msgs/msg/PointStamped` | x=`ex`, y=`ey`, z=면적비. `header` = 원본 영상 header. QoS best-effort depth 1 |
 | 발행 (선택) | `/target/debug_image` | `sensor_msgs/msg/Image` (`bgr8`) | bbox·중심 오버레이. `publish_debug_image:=true`일 때만 |
 | 발행 (선택) | `/target/debug_mask` | `sensor_msgs/msg/Image` (`mono8`) | open/close까지 끝난 최종 마스크. `publish_debug_mask:=true`일 때만 |
@@ -112,6 +101,7 @@ source install/setup.bash
 | --- | --- | --- |
 | `config_path` | `""` (패키지 기본 설정) | 비우면 빌드 때 설치된 `lv2_module5/config/perception.yaml`. 다른 파일을 쓸 때만 지정. `~/...`, 상대 경로(실행 폴더 기준) 가능 |
 | `image_topic` | `/camera/camera/color/image_raw` | 구독할 color 토픽 |
+| `depth_topic` | `/camera/camera/aligned_depth_to_color/image_raw` | 구독할 정렬 depth 토픽 (`max_distance_m`이 있을 때만) |
 | `publish_debug_image` | `false` | 오버레이 영상 발행. 처리 FPS를 잴 때는 끄기 |
 | `publish_debug_mask` | `false` | 마스크 영상 발행. 처리 FPS를 잴 때는 끄기 |
 | `debug_image_every_n` | `1` | 디버그 영상(오버레이·마스크)을 n 프레임마다 발행 |
@@ -163,31 +153,6 @@ ros2 topic echo /target
 ```
 
 D435 토픽 이름은 `realsense2_camera` 버전에 따라 다를 수 있으니 `ros2 topic list`로 확인하고, 다르면 `-p image_topic:=...`으로 지정합니다.
-
-## batch_detect (이미지·영상 일괄 검출)
-
-`lv2_module5/`에서 실행합니다 (`source ros2_ws/install/setup.bash` 후):
-
-```bash
-ros2 run perception batch_detect --config config/perception.yaml --results results --scene normal <이미지 폴더>
-```
-
-```bash
-ros2 run perception batch_detect --config config/perception.yaml --results results --scene normal --every 5 <영상.mp4>
-```
-
-- 입력: 이미지(`.png .jpg .jpeg .bmp`), 영상(`.mp4 .avi .mov .mkv`), 또는 이 파일들이 든 폴더. 여러 개를 이어서 줄 수 있음
-- `--every n`: 영상에서 n 프레임마다 한 장만 검출 (기본 1 = 전부). 이미지에는 적용하지 않음
-- 튜닝 중에는 `--results /tmp/tuning`처럼 저장소 밖에 출력하고, 제출용만 `results`에 저장
-- RealSense Viewer로 녹화한 `.bag`은 직접 넣을 수 없음: `rs-convert`로 png를 뽑아 넣기. ROS2 bag은 `perception_node` 재처리(`-r /target:=/target_replay`) 사용
-
-발제 저장소 구조에 맞춰 저장합니다.
-- `results/images/<scene>_<파일명>_original.png` (입력 원본, 리사이즈 전), `_mask.png` (정리된 마스크), `_overlay.png` (검출 결과)
-  - 영상 프레임은 `<파일명>` 자리에 `<영상 이름>_f<프레임 번호 6자리>`
-  - 문제 1 결과물 "원본·마스크·검출 이미지" 3종이 한 번에 나옵니다
-- `results/logs/perception_<scene>.csv` — `file,frame,status,reason,width,height,cx,cy,x,y,z,rejected,process_ms`
-
-정상·대상 없음·가림 3장면 결과물(문제 1)은 `--scene normal|none|covered`, 평가 프레임 판정(평가 8)은 `--scene eval`처럼 구분합니다.
 
 ## 남은 작업
 
