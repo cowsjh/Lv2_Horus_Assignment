@@ -1,0 +1,14 @@
+# 인지(검출) 설정 — perception_node·batch_detect 가 읽음 (perception::load_config)
+# HSV 값은 OpenCV 기준 (H: 0~179, S·V: 0~255), 파란색 Hue 는 약 100~130
+# TODO: 라즈베리파이 영상으로 batch_detect 결과를 보며 재튜닝, 근거는 report.md 에 기록
+# 모르는 키가 있으면 노드 시작 안 함 (오타 방지)
+# 고정값 (설정 아님): open 1회, close 2회, 후보 선택은 면적이 가장 큰 것
+detector:
+  hsv_ranges:
+    - lower: [98, 120, 40]   # PC 촬영 영상 기준 (2026-10-02), 블록 그늘진 면 포함, 배경 S<=100 제외
+      upper: [130, 255, 255]
+  min_area_px: 300.0       # 이보다 작은 컨투어는 잡음으로 제외
+  blur_ksize: 5            # 0 = 블러 끔, 홀수
+  morph_kernel: 5          # open·close 에 쓰는 타원 커널 크기(px), 클수록 큰 잡음·구멍까지 정리
+  bbox_style: rotated      # 목표 중심 = bbox 중심, axis(boundingRect) | rotated(minAreaRect, 기울어진 블록)
+  resize_width: null       # null = D435 color 해상도 그대로 (예: 640x480), 값이 있으면 폭 기준·높이는 비율 유지
