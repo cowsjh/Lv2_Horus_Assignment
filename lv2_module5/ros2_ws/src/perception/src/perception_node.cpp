@@ -150,14 +150,15 @@ public:
     }
 
     // 카메라 드라이버가 reliable 로 발행해도 best-effort 구독은 호환됨
+    // depth 1: 처리가 밀리면 옛 프레임은 버리고 가장 최근 프레임만 처리
     image_sub_ = create_subscription<Image>(
-      image_topic, rclcpp::SensorDataQoS(),
+      image_topic, rclcpp::SensorDataQoS().keep_last(1),
       [this](const Image::ConstSharedPtr msg) {on_image(msg);});
 
     // 거리 필터를 쓸 때만 depth 구독, 가장 최근 depth 한 장만 보관
     if (detector_.config().uses_depth()) {
       depth_sub_ = create_subscription<Image>(
-        depth_topic, rclcpp::SensorDataQoS(),
+        depth_topic, rclcpp::SensorDataQoS().keep_last(1),
         [this](const Image::ConstSharedPtr msg) {latest_depth_ = msg;});
     }
 
