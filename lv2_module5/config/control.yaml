@@ -1,0 +1,9 @@
+control_node:
+  ros__parameters:
+
+    # Motor safety range
+    yaw_min: -1.0
+    yaw_max: 1.0
+
+    pitch_min: -1.0
+    pitch_max: 1.0
