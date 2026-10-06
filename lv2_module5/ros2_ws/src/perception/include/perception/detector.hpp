@@ -8,13 +8,14 @@
 //   3. HSV 마스크    : 블러 -> HSV 변환 -> 파란색 범위만 남김
 //   4. 마스크 정리   : open(점 잡음 제거) -> close(구멍 메우기)
 //   5. 후보 측정     : 컨투어마다 면적과 bbox(중심) 계산
-//   6. 후보 필터     : 너무 작은 후보 제외
+//   6. 후보 필터     : 너무 작은 후보, (depth 사용 시) 너무 먼 후보, 사각형과 거리가 먼 후보 제외
 //   7. 목표 선택     : 남은 후보 중 면적이 가장 큰 것
 //   8. 결과 계산     : 정규화 오차와 면적비
 //
 // 목표 중심 (cx, cy) = bbox 중심 (bbox_style: axis | rotated)
 // 정규화 오차        ex = (cx - W/2) / (W/2),  ey = (cy - H/2) / (H/2)   오른쪽·아래쪽이 +
 // 면적비             area_ratio = contour_area / (W * H)
+// 채움률             fill_ratio = contour_area / 회전 bbox(minAreaRect) 면적, 사각형이면 약 1
 //
 // /target (x, y, z) 판정 규칙
 //   x, y, z 중 NaN/inf 가 있음   -> INVALID    (사용 금지, 발행하지 않음)
@@ -60,6 +61,12 @@ enum class BboxStyle { Axis, Rotated };
 constexpr int kOpenIterations = 1;
 constexpr int kCloseIterations = 2;
 
+// depth 거리 측정 (설정 파일에서 바꾸지 않는 고정값)
+//   bbox 중심 주변 kDepthWindow×kDepthWindow 픽셀에서 0 이 아닌 값의 중앙값
+//   depth 영상은 color 에 정렬된 16UC1 (단위 mm), 0 = 측정 실패
+constexpr int kDepthWindow = 5;
+constexpr double kDepthScale = 0.001;  // mm -> m
+
 struct DetectorConfig
 {
   // 목표 색 HSV 범위, 여러 개면 OR 로 합침
@@ -76,6 +83,16 @@ struct DetectorConfig
 
   // 처리 전 리사이즈 폭(px), 0 이면 입력 해상도 그대로, 높이는 비율 유지
   int resize_width = 0;
+
+  // 거리 상한(m), 이보다 먼 후보는 제외 (too_far)
+  // 0 이면 depth 미사용 (yaml 의 null), depth 가 없거나 측정 실패면 제외하지 않음
+  double max_distance_m = 0.0;
+
+  // 채움률 하한(0~1), 이보다 낮으면 제외 (not_box), 0 이면 끔 (yaml 의 null)
+  // 퍽(직육면체)은 어느 방향에서 봐도 사각형·육각형이라 채움률이 높음, 옷·몸 덩어리는 낮음
+  double min_fill_ratio = 0.0;
+
+  bool uses_depth() const {return max_distance_m > 0.0;}
 
   // 값이 잘못되면 std::invalid_argument
   void validate() const;
@@ -129,6 +146,8 @@ struct TargetResult
   double ey = 0.0;
   double area_px = 0.0;             // 컨투어 면적(px)
   double area_ratio = 0.0;          // 면적비
+  double distance_m = std::numeric_limits<double>::quiet_NaN();  // 목표 거리(m), depth 없으면 NaN
+  double fill_ratio = 0.0;          // 채움률
   std::vector<cv::Point> contour;   // 선택된 컨투어, 검출일 때만 값 있음
   std::vector<cv::Point2f> bbox;    // bbox 꼭짓점 4개, 검출일 때만 값 있음
   std::string reason;               // 미검출·무효 사유
@@ -157,7 +176,10 @@ struct Candidate
   double cx = 0.0;                  // bbox 중심
   double cy = 0.0;
   std::vector<cv::Point2f> bbox;    // 꼭짓점 4개
+  double distance_m = std::numeric_limits<double>::quiet_NaN();  // depth 거리(m), 없으면 NaN
+  double fill_ratio = 0.0;          // 채움률 (bbox_style 과 상관없이 회전 bbox 기준)
   std::string reject;               // 필터에서 제외된 사유, 통과하면 빈 문자열
+  std::string reject_label;         // 오버레이에 쓰는 제외 사유 (예: "fill=0.52<0.60")
 };
 
 // 디버그·결과 저장용 중간 결과
@@ -181,14 +203,15 @@ class TargetDetector
 public:
   explicit TargetDetector(DetectorConfig config);
 
-  TargetResult process(const cv::Mat & bgr) const;
-  Detection process_debug(const cv::Mat & bgr) const;
+  // depth: color 에 정렬된 16UC1 depth (선택), 비어 있으면 거리 필터 없이 동작
+  TargetResult process(const cv::Mat & bgr, const cv::Mat & depth = cv::Mat()) const;
+  Detection process_debug(const cv::Mat & bgr, const cv::Mat & depth = cv::Mat()) const;
 
   const DetectorConfig & config() const {return config_;}
 
 private:
   std::pair<std::vector<Candidate>, std::vector<Candidate>> find_candidates(
-    const cv::Mat & mask) const;
+    const cv::Mat & mask, const cv::Mat & depth) const;
   TargetResult build_result(const Candidate & target, int width, int height) const;
 
   DetectorConfig config_;
@@ -218,11 +241,21 @@ struct BoundingBox
 // 컨투어의 bbox 와 그 중심
 BoundingBox bounding_box(const std::vector<cv::Point> & contour, BboxStyle style);
 
-// 면적과 bbox 계산, 면적이 0 인 컨투어는 값 없음
+// 컨투어 면적 / 회전 bbox 면적, 회전 bbox 면적이 0 이면 0
+double fill_ratio(const std::vector<cv::Point> & contour, double area_px);
+
+// 면적·채움률·bbox 계산, 면적이 0 인 컨투어는 값 없음
 std::optional<Candidate> measure_contour(const std::vector<cv::Point> & contour, BboxStyle style);
 
-// 후보를 제외할 사유, 통과하면 빈 문자열
+// (x, y) 주변 kDepthWindow 영역에서 0 이 아닌 depth 의 중앙값(m), 유효값이 없으면 NaN
+// depth 는 16UC1(mm), 비었거나 형식이 다르면 NaN
+double depth_at(const cv::Mat & depth, double x, double y);
+
+// 후보를 제외할 사유, 통과하면 빈 문자열 (too_small, too_far, not_box)
 std::string reject_reason(const Candidate & candidate, const DetectorConfig & config);
+
+// 오버레이용 제외 사유, not_box 는 "fill=값<기준", 그 외는 사유 그대로
+std::string reject_label(const Candidate & candidate, const DetectorConfig & config);
 
 // 남은 후보 중 면적이 가장 큰 것, 후보가 없으면 값 없음
 std::optional<Candidate> select_target(const std::vector<Candidate> & candidates);
@@ -234,6 +267,16 @@ double area_ratio(double area_px, int width, int height);
 
 // 미검출 사유 문자열 (예: "rejected too_small=2")
 std::string rejection_summary(const std::vector<Candidate> & rejected);
+
+// ---------------------------------------------------------------------------
+// 4. 오버레이 (/target/debug_image 와 결과 이미지가 같은 그림 사용)
+//   목표       : bbox + bbox 중심 + 영상 중심까지 선, 상단에 ex·ey·면적비·채움률
+//   제외 후보  : 회색 컨투어 + 제외 사유 (reject_label)
+// ---------------------------------------------------------------------------
+
+// 검출 결과를 그린 새 이미지 반환, 원본 frame 은 바꾸지 않음
+cv::Mat draw_overlay(
+  const cv::Mat & frame, const TargetResult & result, const std::vector<Candidate> & rejected = {});
 
 }  // namespace perception
 
