@@ -11,3 +11,8 @@ center_node:
     # Control parameters
     max_delta_rad: 0.05
     deadband: 0.03
+
+    # Tracking state (IDLE / TRACKING / LOST)
+    input_timeout_sec: 0.5       # 마지막 /target 수신 후 이 시간 동안 없으면 LOST(TIMEOUT)
+    resume_frames: 3             # IDLE·LOST → TRACKING 에 필요한 연속 검출 프레임 수
+    state_check_period_sec: 0.05 # 무수신 감지 주기

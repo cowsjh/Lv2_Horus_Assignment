@@ -2,17 +2,161 @@
 
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
+#include <string>
+
+
+// ---------------------------------------------------------------------------
+// Tracking state machine (ROS 의존 없음)
+//
+// 상태 (팀 설계 "상태 전이 로직", 발제 문제 4)
+//   IDLE     : 시작 후 목표를 아직 확인하지 못함
+//   TRACKING : 신선한 목표 추적 중
+//   LOST     : 추적 중 목표를 놓침 (사유 NO_TARGET 또는 TIMEOUT)
+//
+// 전이
+//   IDLE     → TRACKING : 검출 연속 resume_frames 프레임
+//   TRACKING → LOST     : 미검출 첫 프레임 (NO_TARGET)
+//   TRACKING → LOST     : 마지막 /target 수신 후 input_timeout_sec 초과 (TIMEOUT)
+//   LOST     → TRACKING : 검출 연속 resume_frames 프레임
+//
+// /target 을 받을 때마다 on_target(), 그 직후와 주기 타이머에서 update()
+// 시각은 초 단위 (노드 시계 기준)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+enum class TrackingState { Idle, Tracking, Lost };
+
+// /tracking_status 값
+const char * to_string(TrackingState state)
+{
+  switch (state) {
+    case TrackingState::Idle:
+      return "IDLE";
+    case TrackingState::Tracking:
+      return "TRACKING";
+    case TrackingState::Lost:
+      return "LOST";
+  }
+  return "UNKNOWN";
+}
+
+// /target (x, y, z) 가 검출인지: 유한값, z > 0, 정규화 범위 안 (인지 classify_target 과 같은 규칙)
+bool is_detected(double x, double y, double z)
+{
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+    return false;
+  }
+  return z > 0.0 && z <= 1.0 && std::fabs(x) <= 1.0 && std::fabs(y) <= 1.0;
+}
+
+class TrackingStateMachine
+{
+public:
+  TrackingStateMachine(double input_timeout_sec, int resume_frames)
+  : input_timeout_sec_(input_timeout_sec), resume_frames_(resume_frames)
+  {
+  }
+
+  // /target 수신 시 호출
+  void on_target(double now_sec, bool detected)
+  {
+    has_input_ = true;
+    last_input_sec_ = now_sec;
+    has_new_frame_ = true;
+    new_frame_detected_ = detected;
+    consecutive_detect_ = detected ? consecutive_detect_ + 1 : 0;
+  }
+
+  // 상태 갱신, 상태가 바뀌었으면 true
+  bool update(double now_sec)
+  {
+    const TrackingState before = state_;
+    const bool timed_out = input_timed_out(now_sec);
+    if (timed_out) {
+      consecutive_detect_ = 0;  // 끊긴 동안의 검출 수는 무효
+    }
+    const bool target_confirmed = !timed_out && consecutive_detect_ >= resume_frames_;
+    const bool new_no_target = has_new_frame_ && !new_frame_detected_;
+    has_new_frame_ = false;
+
+    switch (state_) {
+      case TrackingState::Idle:
+        if (target_confirmed) {
+          change_state(TrackingState::Tracking, "TARGET_CONFIRMED");
+        } else {
+          reason_ = !has_input_ ? "NO_INPUT" : (timed_out ? "TIMEOUT" : "WAITING_TARGET");
+        }
+        break;
+
+      case TrackingState::Tracking:
+        if (timed_out) {
+          change_state(TrackingState::Lost, "TIMEOUT");
+        } else if (new_no_target) {
+          change_state(TrackingState::Lost, "NO_TARGET");
+        }
+        break;
+
+      case TrackingState::Lost:
+        if (target_confirmed) {
+          change_state(TrackingState::Tracking, "TARGET_CONFIRMED");
+        } else if (timed_out) {
+          reason_ = "TIMEOUT";
+        } else if (new_no_target) {
+          reason_ = "NO_TARGET";  // 입력은 다시 오지만 목표 없음
+        }
+        break;
+    }
+    return state_ != before;
+  }
+
+  TrackingState state() const {return state_;}
+
+  // 현재 상태의 사유 (NO_INPUT, WAITING_TARGET, TARGET_CONFIRMED, NO_TARGET, TIMEOUT)
+  const std::string & reason() const {return reason_;}
+
+private:
+  // 한 번이라도 받은 뒤 input_timeout_sec 동안 새 /target 이 없으면 true
+  bool input_timed_out(double now_sec) const
+  {
+    return has_input_ && (now_sec - last_input_sec_) > input_timeout_sec_;
+  }
+
+  void change_state(TrackingState next, const std::string & reason)
+  {
+    state_ = next;
+    reason_ = reason;
+  }
+
+  double input_timeout_sec_;
+  int resume_frames_;
+
+  TrackingState state_ = TrackingState::Idle;
+  std::string reason_ = "NO_INPUT";
+
+  bool has_input_ = false;          // /target 을 한 번이라도 받았는지
+  double last_input_sec_ = 0.0;     // 마지막 /target 수신 시각
+  bool has_new_frame_ = false;      // 마지막 update() 이후 새 /target 이 왔는지
+  bool new_frame_detected_ = false;
+  int consecutive_detect_ = 0;      // 연속 검출 수, 미검출·끊김이면 0
+};
+
+}  // namespace
 
 
 class CenterNode : public rclcpp::Node
 {
 public:
   CenterNode()
-  : Node("center_node")
+  : Node("center_node"),
+    state_machine_(0.5, 3)
   {
     // Dynamixel position range
     // Unit: tick (0 ~ 4095)
@@ -110,10 +254,63 @@ public:
         10
       );
 
+    // Tracking state (IDLE / TRACKING / LOST)
+    //
+    // input_timeout_sec : /target 무수신 → LOST(TIMEOUT)
+    // resume_frames     : 연속 검출 프레임 수 → TRACKING
+    // state_check_period_sec : 무수신 감지 주기
+
+    const double input_timeout_sec =
+      this->declare_parameter<double>(
+        "input_timeout_sec",
+        0.5
+      );
+
+    const int resume_frames =
+      this->declare_parameter<int>(
+        "resume_frames",
+        3
+      );
+
+    const double state_check_period_sec =
+      this->declare_parameter<double>(
+        "state_check_period_sec",
+        0.05
+      );
+
+    state_machine_ =
+      TrackingStateMachine(input_timeout_sec, resume_frames);
+
+    // /tracking_status : IDLE / TRACKING / LOST
+
+    status_pub_ =
+      this->create_publisher<std_msgs::msg::String>(
+        "/tracking_status",
+        rclcpp::QoS(rclcpp::KeepLast(10)).reliable()
+      );
+
+    state_timer_ =
+      this->create_wall_timer(
+        std::chrono::duration<double>(state_check_period_sec),
+        std::bind(
+          &CenterNode::stateTimerCallback,
+          this
+        )
+      );
+
     RCLCPP_INFO(
       this->get_logger(),
       "Center node started."
     );
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Tracking    : timeout %.2f s, resume %d frames",
+      input_timeout_sec,
+      resume_frames
+    );
+
+    publishStatus(this->now());
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -178,6 +375,75 @@ private:
     std_msgs::msg::Float64MultiArray
   >::SharedPtr command_pub_;
 
+  // Tracking state
+
+  TrackingStateMachine state_machine_;
+
+  rclcpp::Publisher<
+    std_msgs::msg::String
+  >::SharedPtr status_pub_;
+
+  rclcpp::TimerBase::SharedPtr state_timer_;
+
+  rclcpp::Time last_status_pub_;
+
+
+  // 상태 갱신, 바뀌면 로그와 /tracking_status 발행
+
+  void updateState(
+    const rclcpp::Time & now
+  )
+  {
+    const TrackingState before =
+      state_machine_.state();
+
+    if (!state_machine_.update(now.seconds()))
+    {
+      return;
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(),
+      "STATE: %s -> %s (%s)",
+      to_string(before),
+      to_string(state_machine_.state()),
+      state_machine_.reason().c_str()
+    );
+
+    publishStatus(now);
+  }
+
+
+  void publishStatus(
+    const rclcpp::Time & now
+  )
+  {
+    std_msgs::msg::String status;
+
+    status.data =
+      to_string(state_machine_.state());
+
+    status_pub_->publish(status);
+
+    last_status_pub_ = now;
+  }
+
+
+  // 무수신(TIMEOUT) 감지, 상태는 바뀔 때 + 1초마다 발행
+
+  void stateTimerCallback()
+  {
+    const rclcpp::Time now =
+      this->now();
+
+    updateState(now);
+
+    if ((now - last_status_pub_).seconds() >= 1.0)
+    {
+      publishStatus(now);
+    }
+  }
+
 
   // /motor/state callback
 
@@ -236,6 +502,27 @@ private:
       ey,
       area_ratio
     );
+
+
+    // Tracking state
+    //
+    // TRACKING 일 때만 아래 명령 계산 진행
+    // IDLE / LOST 이면 명령을 보내지 않음
+
+    const rclcpp::Time now =
+      this->now();
+
+    state_machine_.on_target(
+      now.seconds(),
+      is_detected(ex, ey, area_ratio)
+    );
+
+    updateState(now);
+
+    if (state_machine_.state() != TrackingState::Tracking)
+    {
+      return;
+    }
 
 
     // Wait until motor state is received
