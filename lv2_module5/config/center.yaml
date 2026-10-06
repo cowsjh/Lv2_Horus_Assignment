@@ -1,0 +1,13 @@
+center_node:
+  ros__parameters:
+
+    # Motor range
+    yaw_min: -1.0
+    yaw_max: 1.0
+
+    pitch_min: -1.0
+    pitch_max: 1.0
+
+    # Control parameters
+    max_delta_rad: 0.05
+    deadband: 0.03
