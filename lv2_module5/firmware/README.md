@@ -54,7 +54,8 @@ flags (비트 합, 예: 3 = HOLD + TIMEOUT)
 | 명령 타임아웃 `CMD_TIMEOUT_MS` | 500 ms | |
 | 상태 보고 주기 | 20 ms (50 Hz) | |
 | 동작 모드 | 위치 제어(3), 두 축 모두 | 부팅 시 설정 |
-| 안전 범위 [tick] | yaw 698~3502, pitch 1933~2811 | `config.h`. `config/device.yaml`과 일치시킬 것. 모터 Min/Max Position Limit에도 기록 |
+| 안전 범위 [tick] | yaw 698~3502, pitch 2230~3033 | `config.h`. `config/device.yaml`과 일치시킬 것. 모터 Min/Max Position Limit에도 기록. pitch는 브래킷 변경 후 재측정 |
+| 부팅 시 원점 이동 | 켜짐, 원점 yaw 2046 · pitch 2553 | `HOME_ON_BOOT`, `HOME_TICK`. 전원 · RESET 때만 Profile Velocity 속도로 이동. 통신 끊김 · 정지 상태에서는 원점으로 가지 않음 |
 | Profile Velocity | 20 (약 0.48 rad/s) | 초기 시험용 낮은 값 |
 | Bus Watchdog | 0 (사용 안 함) | v1. 위치 모드라 보드가 멈춰도 마지막 목표 근처에서 정지 |
 
@@ -76,6 +77,7 @@ sudo systemctl stop ModemManager && sudo systemctl disable ModemManager
    ```
 
    `S,<yaw>,<pitch>,3`이 50 Hz로 나오면 정상 (명령이 없으니 HOLD + TIMEOUT).
+   부팅 직후에는 위치가 원점(2046, 2553)으로 천천히 이동하는 것이 보인다 (`I,homing_on_boot`).
    `--omap crlf`가 없어도 Enter(`\r`)가 줄 끝으로 인식된다. 종료: `Ctrl+A` 후 `Ctrl+X`.
 
 2. 타임아웃 확인: picocom에서 `G,2100,2553` 입력 후 Enter
@@ -97,7 +99,7 @@ sudo systemctl stop ModemManager && sudo systemctl disable ModemManager
    - 목표에 도달해 머물고 flags = 0이면 정상.
    - 터미널 B에서 `Ctrl+C` → 0.5 s 안에 flags = 3, 위치 변화 없음 → 제어 통신 중단 정지 확인.
 
-4. 범위 제한 확인: 터미널 B에서 `G,2046,3000` (pitch 안전 최대 2811 초과)
-   - pitch가 2811 부근에서 멈추고 flags = 4이면 정상.
+4. 범위 제한 확인: 터미널 B에서 `G,2046,3500` (pitch 안전 최대 3033 초과)
+   - pitch가 3033 부근에서 멈추고 flags = 4이면 정상.
 
 5. 기본 자세로 복귀: `G,2046,2553`
