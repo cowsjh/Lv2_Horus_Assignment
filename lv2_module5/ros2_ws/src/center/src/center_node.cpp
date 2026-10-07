@@ -325,6 +325,7 @@ public:
     );
 
     publishStatus(this->now());
+    last_control_time_ = this->now();
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -410,7 +411,9 @@ private:
   rclcpp::TimerBase::SharedPtr state_timer_;
 
   rclcpp::Time last_status_pub_;
-
+   
+  // control dt 계산용
+  rclcpp::Time last_control_time_;
 
   // 상태 갱신, 바뀌면 로그와 /tracking_status 발행
 
@@ -609,11 +612,12 @@ private:
       return;
     }
 
-// Calculate yaw delta
-   double yaw_delta = - yaw_kp_ * error_x;
-
-// Calculate pitch delta
-    double pitch_delta = -pitch_kp_ * error_y;
+    const double dt = (now - last_control_time_).seconds();
+    last_control_time_ = now;
+  
+    // speed × dt = position increment
+    double yaw_delta   = -yaw_kp_ * error_x * dt;
+    double pitch_delta = -pitch_kp_ * error_y * dt;
 
     // Limit movement per command
     yaw_delta   = std::clamp(yaw_delta, -max_delta_tick_, max_delta_tick_);
