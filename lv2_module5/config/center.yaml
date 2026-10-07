@@ -2,18 +2,18 @@ center_node:
   ros__parameters:
 
     # Motor range
-    yaw_min: -1.0
-    yaw_max: 1.0
+    yaw_min: 698.0
+    yaw_max: 3502.0
 
-    pitch_min: -1.0
-    pitch_max: 1.0
+    pitch_min: 1933.0
+    pitch_max: 2811.0
 
     # Control parameters
-    max_delta_rad: 0.05
+    max_delta_tick_: 100
     deadband: 0.03
 
-    yaw_kp: 60.0
-    pitch_kp: 60.0
+    yaw_kp: 100.0
+    pitch_kp: 100.0
 
     # Tracking state (IDLE / TRACKING / LOST)
     input_timeout_sec: 0.5       # 마지막 /target 수신 후 이 시간 동안 없으면 LOST(TIMEOUT)
