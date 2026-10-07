@@ -96,6 +96,13 @@ bool setupOne(int k) {
   present_[k] = p;
   writeGoal(k, clampToSafe(k, p));
   dxl.torqueOn(id);
+
+  // 4) 부팅 시 원점 이동: 토크를 켠 뒤 목표만 원점으로 바꾼다
+  //    (순서가 중요: 원점을 먼저 쓰고 토크를 켜면 켜는 순간 세게 끌려감)
+  //    holding_ 은 true 로 남아 있으므로 hold() 가 이 목표를 덮어쓰지 않고, 원점까지 간다
+  if (cfg::HOME_ON_BOOT) {
+    writeGoal(k, clampToSafe(k, cfg::HOME_TICK[k]));
+  }
   return true;
 }
 
@@ -117,6 +124,9 @@ bool init() {
   }
   holding_ = true;
   ready_ = ok;     // 한 축이라도 실패하면 명령을 받지 않는다 (반쪽 동작 방지)
+  if (ok && cfg::HOME_ON_BOOT) {
+    Serial.println("I,homing_on_boot");
+  }
   return ok;
 }
 

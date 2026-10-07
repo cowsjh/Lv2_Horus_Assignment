@@ -18,8 +18,8 @@
       safe_max_tick: 3502
     tilt:
       id: 12
-      center_tick: 2553          # 기본 자세
-      measured_min_tick: 1833    # 아래쪽 끝
-      measured_max_tick: 2911    # 위쪽(뒤) 끝
-      safe_min_tick: 1933
-      safe_max_tick: 2811
+      center_tick: 2553          # 기본 자세 (유지)
+      measured_min_tick: 2130    # 아래쪽 끝 (브래킷 변경 후 재측정)
+      measured_max_tick: 3133    # 위쪽 끝 (브래킷 변경 후 재측정)
+      safe_min_tick: 2230
+      safe_max_tick: 3033
