@@ -423,9 +423,20 @@ private:
   {
     const TrackingState before =
       state_machine_.state();
+    const std::string reason_before =
+      state_machine_.reason();
 
     if (!state_machine_.update(now.seconds()))
     {
+      // 상태는 그대로지만 인지 입력이 끊긴 경우 한 번만 기록 (예: LOST 중 인지 중단)
+      if (state_machine_.reason() == "TIMEOUT" && reason_before != "TIMEOUT")
+      {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "STATE: %s (TIMEOUT)",
+          to_string(state_machine_.state())
+        );
+      }
       return;
     }
 
