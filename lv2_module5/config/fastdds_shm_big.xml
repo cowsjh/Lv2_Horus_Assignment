@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fast DDS 대용량 전송 설정: 기본 공유 메모리(약 0.5 MB) < 640x480 영상 1장(0.9 MB) → 프레임 손실 방지 (SHM 32 MB + UDP 버퍼 4 MB) -->
+<dds xmlns="http://www.eprosima.com">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>shm_big</transport_id>
+        <type>SHM</type>
+        <segment_size>33554432</segment_size>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>udp_big</transport_id>
+        <type>UDPv4</type>
+        <sendBufferSize>4194304</sendBufferSize>
+        <receiveBufferSize>4194304</receiveBufferSize>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="shm_big_profile" is_default_profile="true">
+      <rtps>
+        <useBuiltinTransports>false</useBuiltinTransports>
+        <userTransports>
+          <transport_id>shm_big</transport_id>
+          <transport_id>udp_big</transport_id>
+        </userTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>
