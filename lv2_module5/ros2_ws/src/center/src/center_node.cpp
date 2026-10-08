@@ -626,16 +626,17 @@ private:
       return;
     }
 
-    const double dt = std::clamp((now - last_control_time_).seconds(), 0.0, 1.0);
-    last_control_time_ = now;
+    // const double dt = std::clamp((now - last_control_time_).seconds(), 0.0, 1.0);
+    const double dt = 1;    
+    // last_control_time_ = now;
   
     // speed × dt = position increment
     double yaw_delta   = last_yaw_delta + -yaw_kp_ * error_x * dt;
     double pitch_delta = last_pitch_delta + -pitch_kp_ * error_y * dt;
 
     // 이전 goal 변수에 저장
-    last_yaw_delta = yaw_delta;
-    last_pitch_delta = pitch_delta;
+    // last_yaw_delta = yaw_delta;
+    // last_pitch_delta = pitch_delta;
 
     // Limit movement per command
     yaw_delta   = std::clamp(yaw_delta, -max_delta_tick_, max_delta_tick_);
