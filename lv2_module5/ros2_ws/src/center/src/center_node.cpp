@@ -204,7 +204,7 @@ public:
 
     max_delta_tick_ =
       this->declare_parameter<double>(
-        "max_delta_tick",
+        "max_delta_tick_",
         100.0
       );
 
