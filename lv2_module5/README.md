@@ -44,7 +44,7 @@
 | `ros-lyrical-realsense2-camera` | D435 드라이버 노드 | `ros-lyrical-librealsense2`, `ros-lyrical-realsense2-camera-msgs`, `ros-lyrical-image-transport`, `ros-lyrical-cv-bridge` |
 | `ros-lyrical-cv-bridge` | `sensor_msgs/Image` → `cv::Mat` | `libopencv-dev` |
 | `libopencv-dev` | OpenCV 4.10.0 (`cvtColor`·`inRange`·`findContours`·`moments`) | - |
-| `ros-lyrical-compressed-image-transport` | 디버그 영상 JPEG 압축 → PC RViz 시연 토픽 `/target/debug_image`·`/target/debug_mask` 용 | `ros-lyrical-cv-bridge`, `ros-lyrical-image-transport` |
+| `ros-lyrical-compressed-image-transport` | 디버그 영상 JPEG 압축 재발행 ([원격 PC 디버그](#원격-pc-디버그-rqt) 절의 `image_transport republish`) | `ros-lyrical-cv-bridge`, `ros-lyrical-image-transport` |
 
 ```bash
 sudo apt install ros-lyrical-realsense2-camera ros-lyrical-cv-bridge libopencv-dev ros-lyrical-compressed-image-transport
@@ -84,7 +84,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 | `opencr_ld` | OpenCR 업로더. 공식 배포 실행 파일은 x86-64 전용이라, 같은 소스를 RPi에서 직접 빌드 | 공식 소스를 arm64용으로 빌드 | 1.0.4 |
 | OpenCR 코어 | OpenCR 보드 지원 (`OpenCR:OpenCR:OpenCR`) | 공식 릴리스 수동 설치 + `platform.local.txt` | 1.5.3 |
 | `Dynamixel2Arduino` | XM430 위치 제어 (protocol 2.0) | `arduino-cli lib install` | 0.8.2 |
-| `dialout` 그룹 | 브리지 노드의 시리얼 포트(`/dev/opencr`) 접근 권한 | `usermod` (재로그인 필요) | - |
+| `dialout` 그룹 | `control_node` 의 시리얼 포트(`/dev/opencr`) 접근 권한 | `usermod` (재로그인 필요) | - |
 | `99-opencr.rules` | OpenCR 고정 포트 `/dev/opencr` (ttyACM 번호 변동 대응) | 수동 작성 (`/etc/udev/rules.d/`) | - |
 
 #### 설치 (순서대로)
@@ -190,7 +190,7 @@ source install/setup.bash
 
 ```bash
 ros2 pkg list | grep -E '^(perception|center|control|bringup)$'   # 4줄
-ros2 pkg executables perception                                   # perception perception_node
+ros2 pkg executables perception                                   # perception perception_node 포함
 ```
 
 
@@ -204,7 +204,7 @@ ros2 pkg executables perception                                   # perception p
 | FQBN | `OpenCR:OpenCR:OpenCR` |
 | 포트 | `/dev/opencr` (udev 고정 이름) |
 | 시리얼 baud (RPi ↔ OpenCR) | 115200 (`config.h` `PC_BAUD`) |
-| 통신 타임아웃 `CMD_TIMEOUT_MS` | 500 ms (`config.h`). 올바른 `G`·`H` 가 이 시간 동안 없으면 hold |
+| 통신 타임아웃 `CMD_TIMEOUT_MS` | 500 ms (`config.h`). 올바른 `G` 명령이 이 시간 동안 없으면 hold |
 | 상태 보고 주기 | 20 ms (50 Hz) |
 
 ### 1) 접속 · 코드 갱신
@@ -274,8 +274,8 @@ ros2 launch bringup bringup.launch.py
 
 | 인자 | 기본값 | 용도 |
 |---|---|---|
-| `use_camera` | `true` | `false` = 카메라 드라이버 끔 (bag 재생 시) |
-| `use_control` | `true` | `false` = `control_node` 끔. **모터에 명령이 나가지 않는다** (OpenCR 없이 시험 · bag 재생 시) |
+| `use_camera` | `true` | `false` = 카메라 드라이버 끔 |
+| `use_control` | `true` | `false` = `control_node` 끔. **모터에 명령이 나가지 않는다** (OpenCR 없이 시험) |
 | `port` | `/dev/opencr` | OpenCR 시리얼 포트 |
 | `debug_image` | `false` | `/target/debug_image` 발행 |
 | `debug_mask` | `false` | `/target/debug_mask` 발행 |
@@ -346,7 +346,6 @@ ros2 run image_transport republish --ros-args \
 - `jpeg_quality` 를 낮추면 대역폭이 줄고 화질이 떨어진다. 파라미터 이름은 `ros2 param list /image_republisher` 로 확인한다.
 - PC 가 구독할 때만 압축한다 (구독자가 없으면 RPi 부하 없음).
 - 재발행은 표시용이다. 처리 FPS · 지연 측정은 `/target` 기준으로 하고, 이 토픽 Hz 를 처리 FPS 로 쓰지 않는다.
-- 카메라 원본은 `realsense2_camera` 가 image_transport 로 발행하므로 `/camera/camera/color/image_raw/compressed` 가 이미 있을 수 있다 (`ros2 topic list | grep compressed`).
 
 ### 4) PC 에서 보기
 
@@ -385,8 +384,8 @@ rqt
 | 파일 | 읽는 곳 | 바꾸는 값 |
 |---|---|---|
 | `config/perception.yaml` | `perception_node` (설치 경로 `share/perception/config/`, `config_path` 파라미터로 바꿀 수 있음) | HSV 범위, 최소 면적, 블러 · 모폴로지 커널, bbox 형식, 리사이즈 폭, 거리 상한(`max_distance_m`, depth 사용), 채움률 하한 |
-| `config/center.yaml` | `center_node` (bringup 이 `share/bringup/config/` 로 설치해 전달) | 회전 범위 `yaw_min/max` · `pitch_min/max` [tick], `yaw_kp` · `pitch_kp`, 명령 1회 최대 이동 `max_delta_tick` [tick], `deadband` [정규화 오차], `input_timeout_sec`(0.5), `resume_frames`(3), `state_check_period_sec` |
-| `config/device.yaml` | 노드가 읽지 않음 (장비 실측 기록) | 축별 ID · center · 측정/안전 범위 [tick], 부호. `config.h` · `center.yaml` 범위의 기준 |
+| `config/center.yaml` | `center_node` (bringup 이 `share/bringup/config/` 로 설치해 전달) | 회전 범위 `yaw_min/max` · `pitch_min/max` [tick], `yaw_kp` · `pitch_kp`, 명령 1회 최대 이동 `max_delta_tick` [tick] (현재 yaml 키가 `max_delta_tick_` 라 적용되지 않고 코드 기본값 100 사용), `deadband` [정규화 오차], `input_timeout_sec`(0.5), `resume_frames`(3), `state_check_period_sec` |
+| `config/device.yaml` | 노드가 읽지 않음 (장비 실측 기록) | 축별 ID · center · 측정/안전 범위 [tick], 부호. `config.h` 의 `SAFE_MIN/MAX` · `HOME_TICK` 과 같은 값 |
 | `config/fastdds_shm_big.xml` | bringup 이 `FASTDDS_DEFAULT_PROFILES_FILE` 로 지정 | 공유 메모리 · UDP 버퍼 크기 (640x480 영상 프레임 손실 방지) |
 | `firmware/pan_tilt_fw/config.h` | OpenCR 펌웨어 | 보드 측 안전 범위 `SAFE_MIN/MAX` · 원점 `HOME_TICK` · 속도 `PROFILE_VEL` · `CMD_TIMEOUT_MS` · 상태 주기 (`device.yaml` 과 일치시킴, 바꾸면 재업로드) |
 | (launch 인자) | `control_node` | `port`(기본 `/dev/opencr`), `baudrate`(기본 115200, 노드 파라미터) |
@@ -413,7 +412,6 @@ rqt
 | 카메라 드라이버 | 인지 | `/camera/camera/color/image_raw` | `sensor_msgs/msg/Image` | 컬러 영상 | 구독: `SensorDataQoS` (best-effort), depth 1 | 팀 |
 | 카메라 드라이버 | 인지 | `/camera/camera/aligned_depth_to_color/image_raw` | `sensor_msgs/msg/Image` | color 에 정렬된 depth. `max_distance_m` 사용 시 | 구독: `SensorDataQoS` (best-effort), depth 1 | 팀 |
 | 인지 | 판단 | `/target` | `geometry_msgs/msg/PointStamped` | 위 규약 표 | best-effort, 1 (양쪽) | **발제** |
-| 인지 | 기록용 | `/target_replay` | `geometry_msgs/msg/PointStamped` | bag 입력 재처리 출력. 별도 발행 코드 없이 `perception_node --ros-args -r /target:=/target_replay` 로 remap | best-effort, 1 | 발제 (별도 토픽) |
 | 인지 | - | `/target/debug_image` | `sensor_msgs/msg/Image` (`bgr8`) | 컨투어 · 중심 오버레이 (표시용). `publish_debug_image:=true` 일 때만 | best-effort, 1 | 팀 |
 | 인지 | - | `/target/debug_mask` | `sensor_msgs/msg/Image` (`mono8`) | open/close 까지 끝난 최종 마스크. `publish_debug_mask:=true` 일 때만 | best-effort, 1 | 팀 |
 | 판단 | - | `/tracking_status` | `std_msgs/msg/String` | `IDLE` / `TRACKING` / `LOST`. 상태가 바뀔 때 + 1초마다 | reliable, 10 | 토픽명 발제 예시, 타입 팀 |
@@ -421,8 +419,6 @@ rqt
 | 제어 | 판단 | `/motor/state` | `geometry_msgs/msg/PointStamped` | 보드 `S` 줄 변환. `point.x` = yaw, `point.y` = pitch **실측 위치 [tick]**, `point.z` = flags, `frame_id` = `motor`, stamp = RPi 수신 시각. 약 50 Hz | reliable, 10 | 팀 |
 
 `control_node` ↔ OpenCR 은 USB 시리얼 115200 텍스트 프로토콜이다: `/motor/command` 1건 → `G,<yaw_tick>,<pitch_tick>` 1줄, 보드 `S,<yaw_tick>,<pitch_tick>,<flags>` → `/motor/state`. 형식 · flags 는 [`firmware/README.md` 시리얼 프로토콜](firmware/README.md#시리얼-프로토콜).
-
-미구현: `/motor_status`, `/search` action (발제 선택), `SEARCHING` 상태. `control_node` 는 `H`(hold) 를 보내지 않는다.
 
 ## bag 재현
 
