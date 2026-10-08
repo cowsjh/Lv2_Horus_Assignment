@@ -10,7 +10,7 @@ center_node:
     pitch_max: 4095.0
 
     # Control parameters
-    max_delta_tick_: 100
+    max_delta_tick_: 100.0
     deadband: 0.03
 
     yaw_kp: 100.0
