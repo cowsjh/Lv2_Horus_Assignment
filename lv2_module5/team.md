@@ -2,12 +2,75 @@
 
 ## 역할과 기여
 
-| 이름 / GitHub ID | 역할 | 담당 Issue | 병합된 본인 PR | 다른 PR 리뷰 | 구현 · 검증 내용 |
-|---|---|---|---|---|---|
-| 송정혁 / [@cowsjh](https://github.com/cowsjh) | 팀장 · 테크리드 + 검증 · 문서화 | | | | |
-| 한지훈 / [@polarnight1212](https://github.com/polarnight1212) | 제어 | | | | |
-| 정조은 / [@jejeong5976](https://github.com/jejeong5976) | 인지 | | | | |
-| 이창엽 / [@developlcy-oss](https://github.com/developlcy-oss) | 통합 | | | | |
+| 이름 / GitHub ID | 역할 | 담당 Issue | 병합된 본인 PR | 다른 PR 리뷰 |
+|---|---|---|---|---|
+| 송정혁 / [@cowsjh](https://github.com/cowsjh) | 팀장 · 테크리드 + 검증 · 문서화 | 작성 [#22][is22] (dt 추가 요청 → @developlcy-oss 배정, [#24][pr24]로 해결) | [#1][pr1] CONTRIBUTING 브랜치 규약 (승인 [@developlcy-oss][rv1]), [#3][pr3] README 패키지 목록 (승인 [@developlcy-oss][rv3]), [#4][pr4] README 인터페이스 · OpenCR 빌드 · 업로드 가이드 (승인 [@developlcy-oss][rv4]), [#28][pr28] README 갱신 (승인 [@jejeong5976][rv28-jej]) | 승인 17건: [#2][c2] 패키지 빌드 확인, [#5][c5] 빌드 확인, [#6][c6] 공용 환경 컴파일 · 업로드 확인, [#7][c7] 구조 확인 · launch 통합 요청, [#8][c8] depth 필드 작동 확인, [#9][c9] 펌웨어 동작 확인, [#10][c10] 모터 · 타겟 상태별 홀드 확인, [#12][c12], [#13][c13] Kp 파라미터 작동 확인, [#14][c14] 빌드 확인, [#20][c20], [#23][c23] home 원점 확인, [#24][c24] dt 수식 확인, [#25][c25] 타임아웃 reason 확인, [#26][c26] 수식 확인, [#27][c27] 파일 삭제 · README 확인, [#29][c29] 수식 확인. 절차: [#18][c18] · [#19][c19] Issue 브랜치 재작업 요청 |
+| 한지훈 / [@polarnight1212](https://github.com/polarnight1212) | 제어 | 담당 [#16][is16] · 작성 [#17][is17] | [#6][pr6] 장치 설정 · 다이나믹셀 점검 스케치, [#9][pr9] pan-tilt 펌웨어(타임아웃 홀드 · 제한), [#23][pr23] 부팅 시 home 복귀 · pitch 제한, [#27][pr27] device.yaml 삭제 · 측정 기준 README 이동 | [#8 HSV 범위 변경(S 120→190, V 255→230)에 맞게 주석 · 근거 이미지 갱신 요청][p8], [#10][p10] motor state · status 확인 (승인), [#28][p28] 내용 확인. 받은 리뷰 반영: [#9][p9] fail-safe 수정 · 동작 확인 |
+| 정조은 / [@jejeong5976](https://github.com/jejeong5976) | 인지 | 담당 [#15][is15] · 작성 [#16][is16] | [#5][pr5] 인지 C++ 패키지, [#8][pr8] depth · fill ratio 필터, [#11][pr11] center 노드 추적 상태, [#12][pr12] 카메라 구독 queue depth 1, [#14][pr14] bringup 패키지, [#20][pr20] 미사용 control.yaml 삭제, [#25][pr25] 타임아웃 로그 | [#9 `motor.cpp:52-54` 부팅 시 위치 읽기 실패 fail-safe 지적][j9] (반영됨), [#21][j21] tick 단위 반영 확인 (승인), [#23][j23] 변경 파일 확인 (승인), [#28][rv28-jej] 추가 수정 확인 (승인). 받은 리뷰 반영: [#8][j8] |
+| 이창엽 / [@developlcy-oss](https://github.com/developlcy-oss) | 통합 | 담당 [#17][is17], [#22][is22] · 작성 [#15][is15] | [#2][pr2] ROS2 초기 구성, [#7][pr7] center · control 노드 · 설정, [#10][pr10] 파라미터 값 수정, [#13][pr13] Kp · launch, [#21][pr21] center.yaml 수치 수정, [#24][pr24] 제어식 dt 추가, [#26][pr26] P 제어 계산 수정, [#29][pr29] P 계산 수치 · yaml 정리 | [#1][rv1] (승인), [#3][rv3c] · [#3][rv3] (코멘트 · 승인), [#4][rv4] (승인), [#9][d9] 펌웨어 파일 구성 확인 (승인, 이후 새 커밋으로 무효), [#11][d11] 기존 파일 충돌 없음 확인 (승인), [#28][d28] (승인, 이후 새 커밋으로 무효) |
+
+[is15]: https://github.com/cowsjh/Lv2_Horus_Assignment/issues/15
+[is16]: https://github.com/cowsjh/Lv2_Horus_Assignment/issues/16
+[is17]: https://github.com/cowsjh/Lv2_Horus_Assignment/issues/17
+[is22]: https://github.com/cowsjh/Lv2_Horus_Assignment/issues/22
+[pr1]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/1
+[pr2]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/2
+[pr3]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/3
+[pr4]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/4
+[pr5]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/5
+[pr6]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/6
+[pr7]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/7
+[pr8]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/8
+[pr9]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/9
+[pr10]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/10
+[pr11]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/11
+[pr12]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/12
+[pr13]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/13
+[pr14]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/14
+[pr20]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/20
+[pr21]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/21
+[pr23]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/23
+[pr24]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/24
+[pr25]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/25
+[pr26]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/26
+[pr27]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/27
+[pr28]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/28
+[pr29]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/29
+[rv1]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/1#pullrequestreview-5389451738
+[rv3c]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/3#pullrequestreview-5411641113
+[rv3]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/3#pullrequestreview-5411665340
+[rv4]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/4#pullrequestreview-5422569117
+[rv28-jej]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/28#pullrequestreview-5450189857
+[c2]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/2#pullrequestreview-5404765743
+[c5]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/5#pullrequestreview-5423015052
+[c6]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/6#pullrequestreview-5423680518
+[c7]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/7#pullrequestreview-5424830419
+[c8]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/8#pullrequestreview-5425227564
+[c9]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/9#pullrequestreview-5425195534
+[c10]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/10#pullrequestreview-5426799336
+[c12]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/12#pullrequestreview-5427493371
+[c13]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/13#pullrequestreview-5427993720
+[c14]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/14#pullrequestreview-5436514619
+[c20]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/20#pullrequestreview-5437045793
+[c23]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/23#pullrequestreview-5437266572
+[c24]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/24#pullrequestreview-5437430390
+[c25]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/25#pullrequestreview-5437867131
+[c26]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/26#pullrequestreview-5438249658
+[c27]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/27#pullrequestreview-5450062382
+[c29]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/29#pullrequestreview-5450900897
+[c18]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/18#issuecomment-6029650253
+[c19]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/19#issuecomment-6029656455
+[p8]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/8#issuecomment-6011170270
+[p9]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/9#issuecomment-6011587554
+[p10]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/10#pullrequestreview-5426837396
+[p28]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/28#issuecomment-6049908710
+[j8]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/8#issuecomment-6011555309
+[j9]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/9#issuecomment-6011168276
+[j21]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/21#pullrequestreview-5437035609
+[j23]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/23#pullrequestreview-5437247748
+[d9]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/9#pullrequestreview-5425000754
+[d11]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/11#pullrequestreview-5427266444
+[d28]: https://github.com/cowsjh/Lv2_Horus_Assignment/pull/28#pullrequestreview-5450075669
 
 **전원 필수**: 본인 PR 1건 이상 병합 + 타인 PR에 구체적인 리뷰 1건 이상. 팀장도 포함.
 팀장 PR에 대한 타인의 승인도 링크로 연결한다.
@@ -22,46 +85,6 @@
 | 검증 | 시험 조건, 측정 · 그래프, 결과 해석 · 발표 |
 
 역할은 책임 구분이며 다른 영역을 몰라도 된다는 뜻이 아니다.
-
-## 역할별 수행 체크리스트
-
-### 팀장 · 테크리드
-
-- [ ] 팀원과 필수 범위 · 시험 조건 · 일정 · 역할을 합의하고 Issue와 이 문서에 기록했는가?
-- [ ] 팀 저장소와 main 보호 · 리뷰 절차를 구성하고, 적용할 수 없는 설정은 실제 운영 방식과 함께 기록했는가?
-- [ ] 타인 PR의 리뷰 · 시험 결과를 확인한 뒤 병합하고, 본인 PR은 다른 팀원의 리뷰를 받은 뒤 병합했는가?
-- [ ] 통합 실행 · 증빙 접근 · 4명의 기여를 확인하고 제출 태그와 팀 단위 제출을 완료했는가?
-
-### 인지 담당
-
-- [ ] HSV · Contour 파이프라인과 정규화 오차를 구현하고 정상 · 대상 없음 · 가림 장면을 검증했는가?
-- [ ] `/target`의 좌표 · 면적비 · 타임스탬프 · 미검출 출력을 인터페이스 정의에 맞게 발행했는가?
-- [ ] 검출 판정 30프레임과 대상 없는 10프레임의 결과를 남기고 오검출 · 미검출 원인을 설명했는가?
-
-### 제어 담당
-
-- [ ] 실제 모터 ID · baud · 방향을 확인하고 P 제어 · 속도 포화 · 각도 제한을 구현했는가?
-- [ ] Kp 2종을 각 3회 시험하고 원본 CSV와 비교 결과로 추적 특성을 설명했는가?
-- [ ] 미검출 · 입력 타임아웃 · 보드 통신 중단 시 정지와 유효 입력 3회 후 복귀를 검증했는가?
-
-### 통합 담당
-
-- [ ] SSH로 Raspberry Pi에서 OpenCR 빌드 · 업로드 · 시리얼 확인을 수행하고 재현 명령을 `README.md`에 남겼는가?
-- [ ] 인지 · 제어 노드의 메시지 · QoS · 실행 순서 · 설정을 맞추고 모의 입력 및 전체 연결을 검증했는가?
-- [ ] bag과 재생 설정을 정리하고 다른 팀원이 모터 비활성 상태에서 재현할 수 있도록 확인했는가?
-
-### 검증 · 문서화 담당
-
-- [ ] 시험 전 조건 · 산식 · 횟수를 정리하고 정상 30 s · 가림 5회 · 중단 시험 결과를 빠짐없이 기록했는가?
-- [ ] FPS · 오차 · 유효 추적 비율 · 복구 결과를 원본 데이터로 계산하고 실패와 한계를 구분해 해석했는가?
-- [ ] `report.md` · `presentation.md`에 요구사항별 증빙과 시연 순서를 연결하고 접근 권한 · 파일 누락을 확인했는가?
-
-### 팀원 공통 (4명 각각)
-
-- [ ] 본인 기여가 포함된 PR을 1건 이상 병합했는가?
-- [ ] 타인 PR에 구체적인 코드 리뷰를 1건 이상 남겼는가?
-- [ ] 담당 결과 · Issue · PR · 리뷰를 이 문서에 연결했는가?
-- [ ] 본인 구현 내용과 측정 결과를 설명할 수 있는가?
 
 ## 저장소 권한 · 보호 설정
 
@@ -106,16 +129,20 @@
 
 | 항목 | 링크 / 결과 |
 |---|---|
-| 검증용 PR | |
-| 승인 전 병합 차단 확인 | |
-| 타인 승인 | |
-| 팀장 병합 | |
+| 검증용 PR | [#1](https://github.com/cowsjh/Lv2_Horus_Assignment/pull/1) CONTRIBUTING.md 브랜치 규약 수정 (팀장 본인 PR) |
+| 승인 전 병합 차단 확인 | Owner(팀장) 계정에서도 "Review required · Merging is blocked", Merge 버튼 비활성 — [캡처](results/images/pr1-merge-blocked.png) |
+| 타인 승인 | [@developlcy-oss 승인](https://github.com/cowsjh/Lv2_Horus_Assignment/pull/1#pullrequestreview-5389451738) (2026-10-02 07:53 UTC) |
+| 팀장 병합 | @cowsjh 병합 (2026-10-02 07:54 UTC) |
+
+새 커밋 시 승인 무효화: [#28](https://github.com/cowsjh/Lv2_Horus_Assignment/pull/28)에서 @developlcy-oss 승인 후 새 커밋 `90235e5` push 시 승인이 자동 무효화(dismissed)되고, [@jejeong5976 재승인](https://github.com/cowsjh/Lv2_Horus_Assignment/pull/28#pullrequestreview-5450189857) 후 병합했다.
 
 ## 팀장 부재 시 대행
 
 | 대행자 | 기간 | 위임한 권한 |
 |---|---|---|
-| | | |
+| 해당 없음 | 해당 없음 | 해당 없음 |
+
+과제 기간 중 팀장 부재가 없어 대행자를 지정하지 않았다.
 
 계정 · 비밀번호 · 토큰을 공유하여 대신 작업하지 않는다.
 
@@ -123,7 +150,7 @@
 
 | 항목 | 확인자 | 날짜 | 결과 |
 |---|---|---|---|
-| 4인 PR · 리뷰 · 기여 기록 확인 | | | |
-| 최종 main에서 실행 · 정지 · 재현 확인 (팀원 1명 동석) | | | |
-| `lv2-module5-submit` 태그 생성 · push | | | |
-| 제출 채널 제출 (팀장 1명, 1회) | | | |
+| 4인 PR · 리뷰 · 기여 기록 확인 | 송정혁 | 2026-10-08 | 완료 (위 역할 표 · PR · 리뷰 링크) |
+| 최종 main에서 실행 · 정지 · 재현 확인 (팀원 1명 동석) | 송정혁 | 2026-10-08 | 확인자 (이창엽)|
+| `lv2-module5-submit` 태그 생성 · push | 송정혁 | 2026-10-08 | 완료 |
+| 제출 채널 제출 (팀장 1명, 1회) | 송정혁 | 2026-10-08 | 완료 |

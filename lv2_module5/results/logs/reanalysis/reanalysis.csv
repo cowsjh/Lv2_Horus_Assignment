@@ -1,0 +1,5 @@
+bag,target_frames,target_span_s,detected,valid,excluded,valid_tracking_ratio_pct,rmse_ex,lost_transitions
+success_01,622,22.70,531,524,98,84.2,0.2044,2
+fail_01,753,28.74,521,482,271,64.0,0.1661,11
+recording_02,446,14.84,200,176,270,39.5,0.5538,7
+recording_01,413,13.71,297,294,119,71.2,0.3669,2
