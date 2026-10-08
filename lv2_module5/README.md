@@ -152,6 +152,21 @@ sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=tt
     colcon build --symlink-install
     source install/setup.bash
 
+### 모터 측정값 (펌웨어 `firmware/pan_tilt_fw/config.h`의 근거)
+
+측정 방법: `firmware/tools/dxl_check`, 토크 off 상태에서 손으로 회전하며 끝값 기록.
+안전 범위 = 측정 끝값에서 100 tick(약 8.8°) 안쪽. 끝값은 브래킷 · 케이블이 닿기 직전이라 여유를 둔다.
+
+| 축 | ID | 정면 (기본 자세) | 측정 끝값 | 안전 범위 | tick 증가 방향 | 측정일 |
+|---|---|---|---|---|---|---|
+| yaw | 11 | 2046 | 598 ~ 3602 | 698 ~ 3502 | 왼쪽 | 2026-10-06 |
+| pitch | 12 | 2553 | 2130 ~ 3133 | 2230 ~ 3033 | 위쪽 | 2026-10-07 (브래킷 변경 후, 정면은 유지) |
+
+- 공통: XM430-W350 (model 1020), Protocol 2.0, 1,000,000 bps
+- 각도 변환: rad = (tick − 정면) × 2π / 4096 (1 tick ≈ 0.088°)
+- 전원 · RESET 시 정면 위치로 천천히 이동 (`HOME_ON_BOOT`)
+- 측정 로그: `results/logs/dxl_check_2026-10-06.txt`, `results/logs/dxl_check_pitch_bracket_2026-10-07.txt`
+- 값을 바꾸면 `config.h`의 `SAFE_MIN` · `SAFE_MAX` · `HOME_TICK`을 함께 수정하고 펌웨어를 다시 업로드한다 (펌웨어는 이 표나 yaml을 읽지 않는다)
 
 ## OpenCR 업로드 (Raspberry Pi, SSH)
 
