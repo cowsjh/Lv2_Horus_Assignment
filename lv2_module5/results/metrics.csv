@@ -1,1 +1,7 @@
 run_id,kp,config_file,target_distance_m,resolution,repeat_no,fps,detection_rate_pct,background_fp,rmse_ex,valid_tracking_ratio_pct,recovery_success_pct,recovery_time_s,notes
+s3_kp20_run1,20,config/control_kp20.yaml,1.0,640x480,1,,,,0.4616,100.0,,,RMSE·유효 비율은 검출·TRACKING 프레임 기준 (제외 0/476); fps·검출률은 미측정
+s3_kp20_run2,20,config/control_kp20.yaml,1.0,640x480,2,,,,0.5330,71.0,,,RMSE·유효 비율은 검출·TRACKING 프레임 기준 (제외 146/503); fps·검출률은 미측정
+s3_kp20_run3,20,config/control_kp20.yaml,1.0,640x480,3,,,,0.5670,93.6,,,RMSE·유효 비율은 검출·TRACKING 프레임 기준 (제외 33/515); fps·검출률은 미측정
+s3_kp40_run1,40,config/control_kp40.yaml,1.0,640x480,1,,,,0.5115,85.9,,,RMSE·유효 비율은 검출·TRACKING 프레임 기준 (제외 74/524); fps·검출률은 미측정
+s3_kp40_run2,40,config/control_kp40.yaml,1.0,640x480,2,,,,0.4476,96.5,,,RMSE·유효 비율은 검출·TRACKING 프레임 기준 (제외 18/521); fps·검출률은 미측정
+s3_kp40_run3,40,config/control_kp40.yaml,1.0,640x480,3,,,,0.4423,90.9,,,RMSE·유효 비율은 검출·TRACKING 프레임 기준 (제외 43/471); fps·검출률은 미측정

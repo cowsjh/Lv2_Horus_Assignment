@@ -1,416 +1,461 @@
-# Horus — 비전 객체 추적 시스템 발표 자료
-
-PPT 슬라이드 순서대로 작성한다. 슬라이드 하나 = `##` 절 하나.
-
-- 표시 규칙: **✅ 구현** = `main` 에 병합된 코드 · **🔲 설계** = 설계만 있고 아직 구현 전
-- 기준: `main` @ `e35c1ee` (PR #9 병합까지)
-- 측정값(FPS·검출률·RMSE·복구 시간)은 아직 없다. 시험 후 원본 로그로만 채운다.
+# 1. 개요
 
 ---
 
-## 1. 개요
+## 목표
 
-**카메라로 파란 블록을 찾아, 화면 중앙에 오도록 모터가 카메라를 돌린다.**
-
-> 카메라 영상 → HSV·Contour 검출 → 중심 오차 → 추적 제어 → OpenCR → 다이나믹셀 → 카메라 방향 변화 → 새 영상의 오차 확인
-
-| 핵심 질문 | 우리 답 |
-| --- | --- |
-| 무엇을 따라가나 | 단일 색상 목표 1개 (파란 블록) |
-| 어떻게 따라가나 | 정규화 중심 오차 → P 방식 위치 명령 |
-| 안전하게 멈추나 | 목표 소실 · 입력 끊김 · 제어 통신 끊김 각각 정지 |
-| 재현되나 | README · 설정 파일 · bag 으로 다른 팀원이 재실행 |
-
-- 4인 1조, ROS 2 노드 3개(perception · center · control) + OpenCR 펌웨어
-- 발제 필수: 수평 1축 추적 / 우리 목표: 2축(pan · tilt)까지 (선택 도전)
+- 파란 퍽 검출
+- 화면 중앙에 오도록 모터 회전 (2축)
+- 목표를 잃거나 통신이 끊기면 -> **안전 규약 이행**
+- 
 
 ---
 
-## 2. 장비 · 환경 · 목표
+## 장비
 
-### 장비
+| 항목  |                                                     |
+| --- | --------------------------------------------------- |
+| 보드  | Raspberry Pi 4, Ubuntu 26.04, ROS 2 Lyrical, SSH 접속 |
+| 카메라 | RealSense D435, 640×480, 30 FPS                     |
+| 모터  | XM430-W350, ID 11·12, protocol 2.0, 위치형, USB 시리얼    |
+| 중계  | OpenCR                                              |
 
-| 구분 | 사용 장비 |
-| --- | --- |
-| 메인 보드 | Raspberry Pi 4 (헤드리스, PC에서 SSH) |
-| 카메라 | Intel RealSense D435 — 컬러 640×480 · 30 FPS (+ 거리 필터용 depth) |
-| 모터 제어 보드 | OpenCR |
-| 모터 | DYNAMIXEL XM430-W350 × 2 (pan · tilt, 위치 제어) |
-| 목표물 | 파란색 블록 |
-
-### 소프트웨어 환경
-
-| 항목 | 버전 |
-| --- | --- |
-| OS | Ubuntu Server 26.04 |
-| ROS 2 | Lyrical |
-| OpenCV | 4.10.0 |
-| 노드 언어 | C++ (`rclcpp`) |
-| 펌웨어 | Arduino(OpenCR 코어) + Dynamixel2Arduino |
-
-### 목표
-
-| 구분 | 내용 |
-| --- | --- |
-| 필수 | HSV · Contour 검출, ROS 2 인지 · 제어 연결, 수평 1축 P 추적 |
-| 필수 | 목표 소실 · 통신 단절 시 **안전 정지**, 시야 안 재등장 시 **복귀** |
-| 필수 | bag 기록 · 재현, 다른 팀원 실행 확인 |
-| 선택 | 2축(pan · tilt) 추적 |
 
 ---
 
-## 3. 파트 분배 및 역할 분담
+# 2. 역할 분담
 
-| 이름 | 역할 | 맡은 파트 | 주요 결과물 |
-| --- | --- | --- | --- |
-| 송정혁 | 팀장 · 검증 | 구조 설계, 저장소 · 리뷰 운영, 시험 · 문서 | README · 인터페이스 표, `team.md`, `report.md` |
-| 정조은 | 인지 | perception 노드 | HSV · Contour 검출기, depth · 채움률 필터 |
-| 이창엽 | 통합 | center · control 노드 | 노드 뼈대, `/target` → `/motor/command` 연결, 설정 yaml |
-| 한지훈 | 제어 | OpenCR 펌웨어 · 모터 | 장비 확인 스케치, `device.yaml`, `pan_tilt_fw` |
+---
 
-### 협업 방식
+## 역할
+
+| 이름  | 역할      | 주요 책임                              |
+| --- | ------- | ---------------------------------- |
+| 송정혁 | 팀장 · 검증 | 구조 설계, 검증·시험, 결과 해석·발표             |
+| 정조은 | 인지      | 카메라 입력, HSV·Contour, 미검출 처리, 검출 증거 |
+| 한지훈 | 제어      | 모터 연결, 오차→명령, 속도·위치 제한, 정지         |
+| 이창엽 | 통합      | ROS 2 인터페이스, 실행 구성, bag 기록·재생      |
+
+---
+
+
+# 3. 전체 구조
+
+---
+
+## 패키지 · 노드 · 토픽
 
 ```mermaid
 flowchart LR
-  I["Issue"] --> B["작업 브랜치<br/>perception/02 · control/02 ..."]
-  B --> T["구현 · 시험"]
-  T --> P["PR"]
-  P --> R["타인 리뷰 · 승인 1명 이상"]
-  R --> M["팀장 병합 → main"]
-```
+  CAM["카메라 D435<br/>realsense2_camera 드라이버"]
 
-- `main` 보호: PR 필수, 작성자 외 승인 1개 이상, 새 커밋 시 재승인, force push 금지
-- 하드웨어 시험은 한 명씩, Raspberry Pi 에서는 각자 개인 clone 폴더 사용
-
----
-
-## 4. 전체 구조와 인터페이스
-
-### 노드 구조
-
-```mermaid
-flowchart TD
-  CAM["RealSense D435<br/>realsense2_camera"]
-
-  subgraph RPI["Raspberry Pi 4 · ROS 2"]
-    P["perception<br/>검출 · 오차 계산"]
-    C["center<br/>판단 · 명령 계산"]
-    K["control<br/>모터 명령 중계"]
+  subgraph PKG_V["패키지 perception (인지)"]
+    P["perception<br/>설정: perception.yaml"]
+  end
+  subgraph PKG_C["패키지 center (판단)"]
+    D["center<br/>설정: control.yaml, safety.yaml"]
+  end
+  subgraph PKG_M["패키지 control (제어)"]
+    B["control<br/>설정: device.yaml"]
   end
 
-  O["OpenCR 펌웨어<br/>pan_tilt_fw"]
-  M["XM430 × 2<br/>pan · tilt"]
+  O["OpenCR 펌웨어 (ROS 밖)"]
+  M["다이나믹셀 XM430 x2"]
+  V["PC(시연 rqt)"]
+  L["로거 / bag (RPi)"]
 
-  CAM -->|"/camera/camera/color/image_raw"| P
-  P -->|"/target"| C
-  C -->|"/motor/command"| K
-  K -->|"/motor/state"| C
-  K -->|"USB 시리얼 G · H"| O
-  O -->|"S (실측 위치 · flags)"| K
+  CAM -->|"/image_raw"| P
+  P -->|"/target"| D
+  D -->|"/motor_cmd"| B
+  B -->|"/motor_state"| D
+  B -->|"USB 시리얼"| O
   O --> M
-  M -.->|"카메라 방향 변화 → 새 영상"| CAM
+  M -->|"카메라 방향 변화 후 새 영상"| CAM
+  P -.->|"/debug_image (compressed, 네트워크)"| V
+  D -.->|"/tracking_status (네트워크)"| V
+  D -.->|"CSV, bag"| L
 ```
 
-| 노드 | 하는 일 | 하지 않는 일 |
-| --- | --- | --- |
-| perception | 목표 검출, 정규화 오차 · 면적비 발행, 미검출 시 `z=0` | 상태 결정, 모터 명령 |
-| center | 명령 계산, 범위 · 속도 제한, (설계) 상태 결정 · 입력 타임아웃 | 영상 처리, 시리얼 통신 |
-| control | 명령을 OpenCR 로 전달, 모터 상태 발행 | 오차 계산, 상태 결정 |
-| OpenCR | 모터 구동, 통신 끊김 정지, 범위 · 속도 제한 | 오차 계산 |
+- 노드는 토픽으로만 통신
+- 패키지 = 노드·launch·config 빌드 단위
+- 설정은 yaml → launch 파라미터
 
-### 토픽
-
-| 토픽 | 타입 | 발행 → 구독 | 내용 | 상태 |
-| --- | --- | --- | --- | --- |
-| `/target` | `geometry_msgs/PointStamped` | perception → center | x=`ex`, y=`ey`, z=면적비, **z=0 미검출**, best-effort · depth 1 | ✅ |
-| `/motor/command` | `std_msgs/Float64MultiArray` | center → control | `[yaw_delta, pitch_delta]` 상대 이동량 [rad] | ✅ |
-| `/motor/state` | `geometry_msgs/PointStamped` | control → center | x=yaw, y=pitch 현재 각도 [rad] | ✅ (현재는 내부 값) |
-| `/target/debug_image` | `sensor_msgs/Image` | perception → PC | bbox · 중심 오버레이 (옵션) | ✅ |
-| `/tracking_status` | `std_msgs/String` | center → PC | `IDLE` / `TRACKING` / `LOST` | 🔲 |
-
-### `/target` 규약 (발제)
-
-- `ex = (cx − W/2) / (W/2)`, `ey = (cy − H/2) / (H/2)` — 오른쪽 · 아래가 `+`, 범위 −1 ~ +1
-- `z` = 컨투어 면적 / 화면 면적. **`z = 0` 이면 미검출 → x · y 로 제어하지 않음**
-- `header.stamp` = 원본 영상 시각
-
-### 시리얼 프로토콜 (control ↔ OpenCR, 115200, 한 줄 = 한 메시지)
-
-| 메시지 | 방향 | 형식 | 의미 |
-| --- | --- | --- | --- |
-| G | RPi → OpenCR | `G,<yaw_tick>,<pitch_tick>` | 목표 위치로 이동 |
-| H | RPi → OpenCR | `H` | 현재 위치에서 정지 |
-| S | OpenCR → RPi | `S,<yaw_tick>,<pitch_tick>,<flags>` | 50 Hz 실측 위치 · 상태 |
+| 파일                       | 키                                              |
+| ------------------------ | ---------------------------------------------- |
+| `config/perception.yaml` | HSV 범위, 최소 면적, 해상도                             |
+| `config/control.yaml`    | Kp, direction, speed_limit, 회전 범위, 데드밴드, 제어 주기 |
+| `config/safety.yaml`     | 입력 타임아웃, 복귀 프레임 수, 상태 유예                       |
+| `config/device.yaml`     | 포트, 모터 ID, baud, TIMEOUT_MS                    |
 
 ---
 
-## 5. perception 노드 내부 구조
-
-**영상 한 장 → `/target` 메시지 한 개.** OpenCV 는 이 노드 안에서만 쓴다. ✅
-
-```mermaid
-flowchart TD
-  A["color 영상 수신<br/>cv_bridge → BGR"]
-  A0{"프레임 정상?"}
-  B["가우시안 블러 → HSV 변환"]
-  C["inRange 색상 마스크<br/>(perception.yaml HSV 범위)"]
-  D["open 1회 · close 2회<br/>점 잡음 제거 · 구멍 메우기"]
-  E["findContours 후보 추출"]
-  F["후보 필터<br/>면적 too_small · 거리 too_far · 채움률 not_box"]
-  G{"남은 후보 있음?"}
-  H["가장 큰 후보 선택<br/>회전 bbox 중심 → ex, ey, 면적비"]
-  I["(0, 0, 0) 발행<br/>이전 좌표 재사용 금지"]
-  J["/target 발행"]
-  X["발행 안 함<br/>→ center 입력 타임아웃"]
-  K["/target/debug_image<br/>bbox · 중심 오버레이 (옵션)"]
-
-  A --> A0
-  A0 -->|"예"| B --> C --> D --> E --> F --> G
-  A0 -->|"아니오 (손상 · NaN)"| X
-  G -->|"예"| H --> J
-  G -->|"아니오"| I --> J
-  H -.-> K
-```
-
-| 단계 | 설정 키 (`config/perception.yaml`) | 현재 값 |
-| --- | --- | --- |
-| HSV 범위 | `hsv_ranges` | H 98~118, S 190~255, V 25~230 |
-| 최소 면적 | `min_area_px` | 300 px |
-| 잡음 제거 | `blur_ksize`, `morph_kernel` | 5, 5 |
-| 중심 계산 | `bbox_style` | `rotated` (minAreaRect) |
-| 거리 필터 | `max_distance_m` | 1.5 m (depth 사용) |
-| 모양 필터 | `min_fill_ratio` | 0.5 (면적 / 회전 bbox 면적) |
-
-### 결과 3가지
-
-| 상황 | 출력 |
-| --- | --- |
-| 목표 검출 | `(ex, ey, 면적비)`, z > 0 |
-| 정상 프레임 · 목표 없음 | `(0, 0, 0)` 발행 |
-| 프레임 손상 · NaN | **발행하지 않음** (미검출과 "입력 끊김"을 구분) |
-
-- 검출 로직은 ROS 와 분리된 라이브러리(`perception_core`) → PC 에서 단독 시험 가능
-- 처리 FPS 측정 시 디버그 영상 발행을 끈다
+# 4. 인지 구조
 
 ---
 
-## 6. center 노드 내부 구조
+## 노드 입출력
 
-**`/target` 오차 → 모터가 움직일 상대 이동량.**
+| 구분  | 토픽                                   | 타입            | 내용                     |
+| --- | ------------------------------------ | ------------- | ---------------------- |
+| 구독  | `/camera/camera/color/image_raw`     | Image (rgb8)  | D435 color 640×480     |
+| 구독  | `…/aligned_depth_to_color/image_raw` | Image (16UC1) | `max_distance_m` 설정 시만 |
+| 발행  | `/target`                            | PointStamped  | x=ex, y=ey, z=면적비      |
+| 발행  | `/target/debug_image`                | Image (bgr8)  | 오버레이, 기본 꺼짐            |
+| 발행  | `/target/debug_mask`                 | Image (mono8) | 최종 마스크, 기본 꺼짐          |
 
-### 현재 구현 ✅ — `/target` 콜백에서 바로 명령 계산
+- QoS best-effort, depth 1 (구독도 best-effort, reliable 이면 연결 안 됨)
+- 영상 1장마다 1회 발행, 타이머 재발행 없음
+- 설정은 `perception.yaml` 하나, 모르는 키 있으면 시작 안 함
+- 처리 FPS·검출 수·발행 안 함 수 5초 주기 로그
 
-```mermaid
-flowchart TD
-  A["/target 수신"] --> B{"/motor/state 받은 적 있음?"}
-  B -->|"아니오"| W["명령 안 보냄<br/>(현재 위치 모름)"]
-  B -->|"예"| C{"z > 0 ?"}
-  C -->|"아니오 (미검출)"| N["명령 안 보냄"]
-  C -->|"예"| D["ex, ey 를 −1 ~ 1 로 clamp"]
-  D --> E["데드밴드 |e| < 0.03 → 0"]
-  E --> F["delta = e × (현재 위치 → 범위 끝까지 남은 각도)"]
-  F --> G["delta 를 ±max_delta_rad (0.05 rad) 로 제한"]
-  G --> H["현재 + delta 를 [min, max] 로 clamp"]
-  H --> P["/motor/command 발행<br/>[yaw_delta, pitch_delta]"]
-```
-
-| 파라미터 (`config/center.yaml`) | 의미 |
-| --- | --- |
-| `yaw_min/max`, `pitch_min/max` | 회전 범위 [rad] |
-| `max_delta_rad` | 한 번에 움직일 수 있는 최대 각도 (속도 상한 역할) |
-| `deadband` | 중앙 근처 떨림 방지 |
-
-### 다음 단계 🔲 — 타이머 기반 상태머신 (설계)
-
-콜백은 값만 저장하고, **명령은 주기 타이머에서만** 낸다. 메시지가 끊겨도 타이머가 돌아 타임아웃을 감지한다.
+## 검출 
 
 ```mermaid
-flowchart TD
-  EX["Executor"]
-  EX -->|"/target 도착"| CB1["target_cb<br/>값 저장, last_rx 갱신, 연속 검출 카운트"]
-  EX -->|"/motor/state 도착"| CB2["state_cb<br/>실측 각도 저장"]
-  EX -->|"타이머 20~50 Hz"| TM["control_loop"]
-  TM --> T2{"상태 판정<br/>타임아웃 · z=0 · 3프레임 복귀"}
-  T2 -->|"TRACKING"| T3["P 제어로 목표 계산"]
-  T2 -->|"LOST · IDLE"| T4["hold 명령"]
-  T3 --> PUB["모터 명령 발행"]
-  T4 --> PUB
-  T2 --> ST["/tracking_status 발행, CSV 기록"]
-  CB1 -.->|"공유 변수"| TM
-  CB2 -.->|"공유 변수"| TM
+flowchart LR
+  A["① 프레임 검사<br/>채널·dtype"] --> B["② 리사이즈<br/>폭 기준, 비율 유지"] --> C["③ HSV 마스크<br/>블러 → HSV → inRange"] --> D["④ 마스크 정리<br/>open 1 · close 2"]
 ```
 
 ```mermaid
 flowchart LR
-  I["IDLE"] -->|"시작 + z>0 연속 3프레임"| T["TRACKING<br/>P 추적"]
-  T -->|"z=0 (NO_TARGET)"| L["LOST<br/>즉시 hold"]
-  T -->|"/target 0.5 s 무수신 (TIMEOUT)"| L
-  L -->|"z>0 연속 3프레임"| T
+  E["⑤ 후보 측정<br/>면적·bbox 중심·채움률"] --> F["⑥ 후보 필터<br/>too_small · too_far · not_box"] --> G["⑦ 목표 선택<br/>면적 최대 1개"] --> H["⑧ 결과 계산<br/>ex, ey, 면적비"]
 ```
 
-- P 제어식(설계): `goal[k] = clamp(goal[k−1] + dir × Kp × e × dt, min, max)`, `|delta| ≤ speed × dt`
-- Kp 2종 비교 시험은 이 구조에서 진행
+- `TargetDetector::process_debug()` 한 함수에 단계 순서대로
+- `perception_core` 정적 라이브러리, ROS 의존 없음 → 노드·일괄 검출 도구 공용
 
 ---
 
-## 7. motor 노드 내부 구조 (control 노드 + OpenCR 펌웨어)
+## ③~④ HSV 마스크 생성·정리
 
-### control 노드 — ROS ↔ 모터 중계
-
-```mermaid
-flowchart TD
-  A["/motor/command 수신<br/>[yaw_delta, pitch_delta]"] --> B{"값 2개 · 유한값?"}
-  B -->|"아니오"| X["무시 + 경고"]
-  B -->|"예"| C["목표 = 현재 + delta"]
-  C --> D["[min, max] 로 clamp<br/>(하드웨어 보호)"]
-  D --> E["rad → tick 변환 · 시리얼 G 송신 🔲"]
-  E --> F["/motor/state 발행"]
-  S["시리얼 S 수신 🔲<br/>실측 tick → rad"] --> F
-```
-
-- ✅ 명령 검증 · 범위 clamp · `/motor/state` 발행 (현재는 내부 계산값)
-- 🔲 OpenCR 시리얼 연결 — 연결 후 `/motor/state` 는 **실측 위치(S)** 를 쓴다
-- 변환: `rad = (tick − center_tick) × 2π / 4096` (1 tick ≈ 0.088°)
-
-### OpenCR 펌웨어 `pan_tilt_fw` ✅
-
-```mermaid
-flowchart TD
-  subgraph SETUP["setup() — 부팅"]
-    S1["시리얼 115200 시작<br/>타임아웃 정지 상태로 시작"]
-    S2["모터별: ping → 위치 읽기"]
-    S3["토크 off → 위치 모드 · 범위 · 속도 설정"]
-    S4{"위치 다시 읽기 성공<br/>(0~4095)?"}
-    S5["goal = 현재 위치 → 토크 on"]
-    S6["토크 off 유지 · 명령 무시<br/>HW_ERROR 보고"]
-    S1 --> S2 --> S3 --> S4
-    S4 -->|"예"| S5
-    S4 -->|"아니오"| S6
-  end
-
-  subgraph LOOP["loop() — 반복"]
-    L1["시리얼 한 줄 파싱<br/>G · H 만 인정"]
-    L2{"마지막 정상 명령 후<br/>500 ms 초과?"}
-    L3["hold<br/>현재 위치를 goal 로"]
-    L4["20 ms 마다 S 보고<br/>실측 위치 + flags"]
-    L1 --> L2
-    L2 -->|"예"| L3 --> L4
-    L2 -->|"아니오"| L4
-  end
-
-  SETUP --> LOOP
-```
-
-| 파일 | 역할 |
-| --- | --- |
-| `config.h` | ID, 안전 범위, 속도, 타임아웃, flags |
-| `motor.cpp` | 초기화, 이동, hold, 범위 clamp, 상태 읽기 |
-| `protocol.cpp` | G · H 파싱, 타임아웃 판정, S 보고 |
-
-| flags | 1 | 2 | 4 | 8 |
-| --- | --- | --- | --- | --- |
-| 의미 | HOLD 정지 중 | TIMEOUT 명령 끊김 | LIMIT 범위로 잘림 | HW_ERROR 모터 오류 |
+| 항목       | 내용                                             |
+| -------- | ---------------------------------------------- |
+| 색 변환     | rgb8 → bgr8 (cv_bridge) → `GaussianBlur` → HSV |
+| 범위       | HSV `[98,190,25] ~ [118,255,230]`              |
+| 범위 근거    | bag 프레임으로 튜닝, 연한 파랑(하늘색 셔츠·텀블러) 차단             |
+| 원본 보호    | 블러 결과는 새 Mat                                   |
+| open 1회  | 점 잡음 제거 (타원 커널 5px)                            |
+| close 2회 | 블록 안 구멍·틈 메움                                   |
 
 ---
 
-## 8. 정지 · 보호 동작 처리
+## ⑤~⑥ 후보 측정·필터
 
-**위치형 모터는 "명령을 멈춘다 ≠ 정지"다.** 마지막 목표까지 계속 움직인다. 그래서 정지 = **현재 위치를 목표로 다시 쓰는 hold**.
-
-```mermaid
-flowchart TD
-  P["perception<br/>미검출 → z=0 · 손상 프레임 → 발행 안 함"]
-  C["center<br/>z=0 → 명령 없음 · 범위 clamp · 이동량 제한<br/>🔲 0.5 s 입력 타임아웃 → hold"]
-  K["control<br/>명령 검증 · 범위 clamp"]
-  O["OpenCR<br/>500 ms 명령 없음 → hold · 범위 clamp"]
-  M["XM430<br/>Min/Max Position Limit · Profile Velocity"]
-  P -->|"/target"| C -->|"/motor/command"| K -->|"시리얼"| O --> M
-```
-
-아래 층일수록 마지막 안전망. RPi 쪽 정지는 RPi 프로세스가 살아 있어야 동작하므로, **OpenCR 이 스스로 끊김을 감지**해야 한다 (발제 필수).
-
-| 상황 | 감지 위치 | 동작 | 상태 |
-| --- | --- | --- | --- |
-| 목표 미검출 | perception → center | `z=0` 발행 → 명령 안 보냄 | ✅ (🔲 hold 명령으로 전환) |
-| 프레임 손상 | perception | 발행 안 함 → 입력 타임아웃으로 처리 | ✅ |
-| `/target` 끊김 (인지 노드 정지) | center | 0.5 s 무수신 → LOST + hold | 🔲 |
-| 제어 통신 끊김 | OpenCR | 올바른 G · H 500 ms 없음 → hold, flags=TIMEOUT | ✅ 시험 로그 |
-| 범위 밖 목표 | center · control · OpenCR · 모터 | 4중 clamp, flags=LIMIT | ✅ 시험 로그 |
-| 급격한 이동 | center · 모터 | `max_delta_rad` 제한, Profile Velocity 20 (≈0.48 rad/s) | ✅ |
-| 부팅 시 위치 읽기 실패 | OpenCR | 토크 off 유지, 명령 무시, HW_ERROR | ✅ |
-| 잘못된 시리얼 줄 · 잡음 | OpenCR | 무시, 타임아웃 타이머 리셋 안 함 | ✅ |
-| 끊긴 뒤 자동 원점 복귀 | — | **하지 않음** ("계속 움직이지 않는다"와 충돌) | 원칙 |
-
-### 펌웨어 단독 시험 (모터 저속 · 손으로 받친 상태)
-
-| 시험 | 확인 기준 | 증빙 |
+| 제외 사유 | 조건 | 막는 것 |
 | --- | --- | --- |
-| 명령 없이 부팅 | `S,…,3` (HOLD + TIMEOUT) | `results/logs/fw_hold_test_2026-10-06.txt` |
-| 연속 명령 후 중단 | 0.5 s 안에 flags 0 → 3, 위치 변화 없음 | `results/logs/fw_timeout_test_2026-10-06.txt` |
-| 범위 밖 목표 | 안전 범위 끝에서 멈춤, flags=4 | `results/logs/fw_limit_test_2026-10-06.txt` |
+| `too_small` | 면적 < 300 px | 카펫·그림자 점 잡음 |
+| `too_far` | 거리 > 1.5 m (정렬 depth, 5×5 중앙값) | 작업 범위 밖 파란 물체 |
+| `not_box` | 채움률 < 0.5 | 옷·몸 덩어리 |
+
+- 외곽 컨투어만 (`RETR_EXTERNAL`)
+- 중심 = 회전 bbox 중심 (`minAreaRect`)
+- 채움률 = 컨투어 면적 / 회전 bbox 면적
+- depth 없음·측정 실패면 거리로 제외 안 함
 
 ---
 
-## 9. 한 프레임 시퀀스
+## ⑦~⑧ 목표 선택·결과 계산
 
-```mermaid
-sequenceDiagram
-  participant CAM as 카메라 D435
-  participant P as perception
-  participant C as center
-  participant K as control
-  participant O as OpenCR
-  participant M as 모터
+| 항목 | 내용 |
+| --- | --- |
+| 선택 | 면적 최대 후보 1개 |
+| `ex`, `ey` | −1 ~ 1, 오른쪽·아래 + |
+| W·H | 실제 처리 프레임 크기 |
 
-  CAM->>P: color 영상 (stamp t0)
-  P->>P: HSV → 마스크 → 컨투어 → 필터 → ex, ey, z
-  P->>C: /target (stamp t0)
-  alt z > 0
-    C->>C: 데드밴드 · delta 계산 · 제한 · clamp
-    C->>K: /motor/command [yaw_delta, pitch_delta]
-    K->>K: 검증 · clamp · rad → tick
-    K->>O: G,<yaw_tick>,<pitch_tick>
-    O->>M: Goal Position
-  else z = 0 (미검출)
-    C--xK: 명령 없음 (🔲 hold)
-  end
-  M-->>O: Present Position
-  O-->>K: S,<yaw>,<pitch>,<flags> (50 Hz)
-  K-->>C: /motor/state
-  M-->>CAM: 카메라 방향 변화 → 다음 영상
+`ros2_ws/src/perception/src/detector.cpp` — `normalize_error()`, `area_ratio()`
+
+```cpp
+const double half_width  = width  / 2.0;
+const double half_height = height / 2.0;
+return {(cx - half_width) / half_width, (cy - half_height) / half_height};  // ex, ey
+
+return area_px / (static_cast<double>(width) * height);           // z = 면적비
 ```
 
-- 마지막 줄이 **폐루프**: 모터가 움직이면 다음 영상의 오차가 줄어든다
-- control ↔ OpenCR 시리얼 구간(G · S)은 펌웨어 단독 시험까지 완료, ROS 연결은 🔲
-- 지연 측정 시 "영상 수신 → 명령 생성"과 "모터 실제 반응"을 구분해서 보고한다
+---
+
+## 필터 근거와 bag 시험
+
+| 손에 든 퍽 (10/02)               | 조명 변화                       | 하늘색 셔츠                       |
+| ---------------------------- | --------------------------- | ---------------------------- |
+| ![[Horus 인지 bag 손에 든 퍽.gif]] | ![[Horus 인지 bag 조명 변화.gif]] | ![[Horus 인지 bag 하늘색 셔츠.gif]] |
+| 487 / 494                    | 123 / 123                   | 47 / 49                      |
+
+- 숫자 = 검출 프레임 / 전체 프레임 (`batch_detect` 재처리, 6프레임 간격 5 fps)
+- color만 사용 → `too_far` 미반영
+- 사람 대조 검출률은 별도 (30 + 10 프레임)
 
 ---
 
-## 10. 트러블슈팅
-
-| # | 문제 | 원인 | 해결 |
-| --- | --- | --- | --- |
-| 1 | Raspberry Pi 에서 OpenCR 펌웨어 빌드 · 업로드 불가 | 공식 OpenCR 코어의 컴파일러 · 업로더가 x86-64 전용 (RPi 는 arm64) | apt `gcc-arm-none-eabi` 로 컴파일러 대체, 업로더 `opencr_ld` 를 소스에서 arm64 로 빌드, `platform.local.txt` 로 경로 지정 |
-| 2 | OpenCR 코어 압축 해제 실패 | 파일 이름은 `.tar.bz2` 인데 실제 형식은 gzip | `tar xzf` 로 해제 |
-| 3 | 재연결할 때마다 포트 번호 변경 (`ttyACM0` ↔ `ttyACM1`) | USB 연결 순서에 따라 번호가 바뀜 | udev 규칙으로 고정 이름 `/dev/opencr` |
-| 4 | 시리얼에 알 수 없는 문자 유입 | ModemManager 가 OpenCR 을 모뎀으로 보고 `AT\r` 전송 | ModemManager 중지 · 비활성. 펌웨어는 `\r` 도 줄 끝으로 처리, 형식이 틀린 줄은 무시 · 타임아웃 리셋 안 함 |
-| 5 | 부팅 시 모터가 범위 끝으로 튈 위험 | 위치 읽기 실패 시 값 0 → 안전 범위 최솟값으로 clamp → 토크 on 순간 이동 | 위치 읽기 재시도 + 0~4095 확인, 실패하면 토크 off 유지 · 명령 무시 (fix 커밋 `cf37b72`) |
-| 6 | 배경의 파란 물체 오검출 | HSV 만으로는 같은 색 배경과 구분 불가 | depth 거리 필터(1.5 m), 채움률 필터(0.5)로 블록 모양만 남김 |
-| 7 | pan 축 케이블 간섭 | 기구상 회전 가능 범위보다 케이블이 먼저 걸림 | 토크 off 상태에서 손으로 돌려 범위 측정 → 끝값에서 100 tick(≈8.8°) 안쪽을 안전 범위로 사용 |
-| 8 | D435 장치 접근 설정 | RealSense udev 규칙이 apt 패키지에 없음 | librealsense 버전(2.58.4)과 같은 태그의 udev 규칙 수동 설치, USB 3 포트 직결 (허브 사용 안 함) |
+# 5. 판단(center) 구조
 
 ---
 
-## 11. Q&A
+## center 노드 내부 (콜백·타이머)
 
-질문 받습니다.
+```mermaid
+flowchart LR
+  EX["Executor (rclpy.spin)"]
+  EX -->|"/target 도착"| CB1["target_cb<br/>값 저장, last_rx 갱신, 연속 검출 카운트"]
+  EX -->|"/motor_state 도착"| CB2["state_cb<br/>실측 각도 저장"]
+  EX -->|"타이머 20~50Hz"| TM["control_loop"]
+  TM --> T1["now, dt 계산 (노드 시계)"]
+  T1 --> T2{"상태 판정<br/>타임아웃, z=0, 3프레임 복귀"}
+  T2 -->|"TRACKING"| T3["위치형 P 제어로 goal 계산"]
+  T2 -->|"LOST, IDLE"| T4["hold 명령"]
+  T3 --> PUB["/motor_cmd 발행"]
+  T4 --> PUB
+  T2 --> ST["/tracking_status 발행, CSV 한 줄"]
+  CB1 -.공유 변수.-> TM
+  CB2 -.공유 변수.-> TM
+```
 
-예상 질문 메모 (발표자용)
+콜백은 저장만, 명령은 **타이머에서만** -> 메시지가 끊겨도 타이머가 돌아 타임아웃 감지 
+- 단일 스레드 Executor → 잠금 불필요
 
-| 질문 | 답변 요지 |
+---
+
+## 상태 전이
+
+```mermaid
+flowchart LR
+  I["IDLE<br/>새 추적 명령 없음"]
+  T["TRACKING<br/>제한 범위 안에서 P 추적"]
+  L["LOST<br/>즉시 hold, 이전 속도 유지 금지"]
+  S["SEARCHING <br/>각도, 시간 상한 안에서 탐색"]
+
+  I -->|"시작 + 최신 z>0 연속 3프레임"| T
+  T -->|"z=0 (reason=NO_TARGET)"| L
+  T -->|"입력 0.5s 무수신 (reason=TIMEOUT)"| L
+  L -->|"최신 z>0 연속 3프레임"| T
+  L -->|"NO_TARGET 지속 + search_enable"| S
+  S -->|"연속 3프레임 검출 (via=search)"| T
+  S -->|"상한 초과, 취소, TIMEOUT"| L
+  T -->|"명시적 중지"| I
+  L -->|"명시적 중지"| I
+```
+
+- 상태는 `center` 한 곳에서 결정
+- 원인은 상태를 늘리지 않고 `reason` 으로 구분
+
+---
+
+## 코드 · 상태머신
+
+`ros2_ws/src/center/src/center_node.cpp` — `TrackingStateMachine::update()` (ROS 의존 없음)
+
+`input_timeout_sec_` : 타임아웃 기준 시간
+`resume_frames_` : 검출 인지 기준 프레임 수
+
+```cpp
+const bool timed_out = has_input_ && (now_sec - last_input_sec_) > input_timeout_sec_;
+if (timed_out) consecutive_detect_ = 0;          // 끊긴 동안의 검출 수는 무효
+const bool target_confirmed = !timed_out && consecutive_detect_ >= resume_frames_;
+const bool new_no_target = has_new_frame_ && !new_frame_detected_;   // 새로 온 프레임이 미검출
+
+switch (state_) {
+  case Idle:     if (target_confirmed) change_state(Tracking, "TARGET_CONFIRMED"); break;
+  case Tracking: if (timed_out)          change_state(Lost, "TIMEOUT");
+                 else if (new_no_target) change_state(Lost, "NO_TARGET");          break;
+  case Lost:     if (target_confirmed) change_state(Tracking, "TARGET_CONFIRMED"); break;
+}
+```
+
+---
+
+
+## 코드 · 수신과 주기 검사
+
+`ros2_ws/src/center/src/center_node.cpp` — `on_target()`, `stateTimerCallback()`
+
+```cpp
+void on_target(double now_sec, bool detected) {     // /target 콜백에서
+  has_input_ = true;
+  last_input_sec_ = now_sec;                        // 노드 시계로 기록
+  consecutive_detect_ = detected ? consecutive_detect_ + 1 : 0;
+}
+
+void stateTimerCallback() {                         // state_check_period_sec = 0.05
+  const rclcpp::Time now = this->now();
+  updateState(now);                                 // 메시지가 없어도 TIMEOUT 판정
+  if ((now - last_status_pub_).seconds() >= 1.0) publishStatus(now);
+}
+```
+
+- `z=0` 도 메시지 도착 → `last_input_sec_` 갱신 → 타임아웃 아님 (미검출 ≠ 침묵)
+
+---
+
+
+# 6. 제어(control) 구조
+
+---
+
+## 위치형 P 제어 루프
+
+```mermaid
+flowchart LR
+  A["타이머 tick"] --> B["now, dt = now - t_prev (초, 상한 적용)"]
+  B --> C{"상태 TRACKING?"}
+  C -->|"아니오"| H["hold 명령 (현재 위치 고정)"]
+  C -->|"예"| D{"|e| < 데드밴드?"}
+  D -->|"예"| E["delta = 0"]
+  D -->|"아니오"| F["delta = dir * Kp * e * dt"]
+  F --> G["delta = clamp(delta, -speed*dt, +speed*dt)"]
+  E --> I["goal = clamp(goal_prev + delta, 하한, 상한)"]
+  G --> I
+  I --> P["/motor_cmd 발행"]
+  H --> P
+```
+
+`goal[k] = clamp(goal[k-1] + dir × Kp × e × dt, min, max)`
+
+---
+
+
+## P 제어
+
+`ros2_ws/src/center/src/center_node.cpp` — `targetCallback()`
+
+```cpp
+if (state_machine_.state() != TrackingState::Tracking) return;   // IDLE·LOST: 명령 없음
+
+double error_x = std::clamp(ex, -1.0, 1.0);
+if (std::fabs(error_x) < deadband_) error_x = 0.0;               // 데드밴드
+
+double yaw_delta = -yaw_kp_ * error_x;                            // P 제어 [tick]
+yaw_delta = std::clamp(yaw_delta, -max_delta_tick_, max_delta_tick_);   // 한 번 이동량 제한
+
+const double target_yaw = std::clamp(current_yaw_ + yaw_delta, yaw_min_, yaw_max_);  // 범위
+command.data = {target_yaw, target_pitch};
+command_pub_->publish(command);                                   // /motor/command
+```
+
+pitch도 같은 식(`ey`). 기준은 실측 위치(`/motor/state`).
+
+---
+
+
+## 코드 · 시리얼 중계
+
+`ros2_ws/src/control/src/control_node.cpp`
+
+```cpp
+// /motor/command → "G,<yaw>,<pitch>\n"
+std::snprintf(line, sizeof(line), "G,%d,%d\n", yaw, pitch);
+write(serial_fd_, line, std::strlen(line));
+
+// "S,<yaw>,<pitch>,<flags>" → /motor/state (10 ms 타이머로 읽기)
+if (std::sscanf(line.c_str(), "S,%d,%d,%d", &yaw, &pitch, &flags) != 3) return;
+msg.point.x = yaw;  msg.point.y = pitch;  msg.point.z = flags;
+state_pub_->publish(msg);
+```
+
+OpenCR 펌웨어
+
+| 기능 | 내용 |
 | --- | --- |
-| 미검출과 통신 끊김을 어떻게 구분하나? | 미검출은 `z=0` 메시지가 **온다**. 끊김은 메시지가 **안 온다** → 수신 시각 기준 타임아웃 |
-| 왜 OpenCR 에도 타임아웃이 필요한가? | RPi 노드가 죽거나 SSH 가 끊기면 RPi 쪽 정지 로직도 같이 멈춘다. 보드만이 마지막 안전망 |
-| 위치형인데 명령을 안 보내면 멈추지 않나? | 마지막 목표까지 계속 이동한다. 그래서 현재 위치를 목표로 덮어쓰는 hold 를 쓴다 |
-| 정지를 어떻게 확인했나? | 명령 로그가 아니라 S 메시지의 **실측 위치가 변하지 않음**으로 확인 (펌웨어 시험 로그) |
-      
+| 명령 수신 | `G,<yaw>,<pitch>` 파싱 후 goal 설정 |
+| 상태 송신 | 현재 각도·상태를 주기 전송 |
+| 정지·제한 | 7절 (보드 타임아웃, hold, 범위·속도 제한) |
+
+---
+
+# 7. 안전 · 보호 규약
+
+---
+
+## 보호 위치
+
+```mermaid
+flowchart LR
+  P["인지 노드"] -->|"/target"| D["center<br/>#1 z=0, #2 0.5s, #5 범위, #6 속도"]
+  D -->|"/motor_cmd"| B["control<br/>순수 중계 (받으면 바로 송신)"]
+  B -->|"시리얼 G, H"| O["OpenCR<br/>#4 hold"]
+  O --> M["XM430<br/>#7 Profile Velocity"]
+```
+
+| 층       | 기다리는 것         | 끊기면                |
+| ------- | -------------- | ------------------ |
+| center  | `/target` 0.5s | hold 명령            |
+| control | `/motor_cmd`   | 보드에 `H`            |
+| OpenCR  | 시리얼 명령         | 스스로 hold (마지막 안전망) |
+
+각 층이 자기 타이머로 정지.
+
+
+---
+
+## 왜 보드에도 타임아웃인가
+
+| 상황 | 결과 |
+| --- | --- |
+| tmux/systemd 실행, SSH만 끊김 | 노드 살아 있음, 추적 계속 |
+| 일반 터미널 실행 후 SSH 끊김 | 프로세스 종료 → 보드 타임아웃 hold |
+| 노드 크래시, RPi 정지 | 보드 타임아웃이 유일한 정지 수단 |
+
+RPi 쪽 정지는 RPi 프로세스가 살아 있어야 동작한다.
+
+---
+## 코드 · 보드 타임아웃
+
+`firmware/pan_tilt_fw/` — `pan_tilt_fw.ino`, `protocol.cpp`, `config.h`
+
+```cpp
+constexpr uint32_t CMD_TIMEOUT_MS = 500;           // 제어 통신 중단 판정
+
+void loop() {
+  protocol::poll();                                 // G·H 수신 시 last_cmd_ms 갱신
+  const bool timed_out = protocol::timedOut();
+  if (timed_out) motor::hold();                     // 제어 통신 중단 → 정지
+  // 20 ms 마다 S,<yaw>,<pitch>,<flags> 보고
+}
+
+bool timedOut() { return (millis() - last_cmd_ms) > cfg::CMD_TIMEOUT_MS; }
+
+// 시작 시: 명령이 오기 전까지 타임아웃 정지 상태
+last_cmd_ms = millis() - cfg::CMD_TIMEOUT_MS - 1;
+```
+
+---
+
+## 상황별 동작
+
+| #   | 상황         | 감지              | 조건                              | 동작                    | 상태                |
+| --- | ---------- | --------------- | ------------------------------- | --------------------- | ----------------- |
+| 1   | 목표 미검출     | center          | `z=0` 첫 프레임                     | hold                  | `LOST(NO_TARGET)` |
+| 2   | 인지 입력 끊김   | center          | `/target` 0.5 s 무수신             | 즉시 hold               | `LOST(TIMEOUT)`   |
+| 3   | 판단 노드 끊김   | OpenCR (#4)     | `/motor_cmd` 끊김                 | #4 hold               | `TIMEOUT_STOP`    |
+| 4   | 시리얼 끊김 1단계 | OpenCR          | `TIMEOUT_MS` 무수신                | hold                  | `TIMEOUT_STOP`    |
+| 5   | 범위 끝       | center + OpenCR | goal이 min/max 밖                 | 바깥 delta = 0          | `LIMIT`           |
+| 6   | 명령 속도 초과   | center          | `abs(delta) > speed_limit × dt` | delta 포화              | -                 |
+| 7   | 모터 속도 초과   | OpenCR / XM430  | goal 급변                         | `Profile Velocity` 제한 | -                 |
+
+
+
+시간·임계값은 예시, 장비에서 확정.
+
+---
+
+## 코드 · hold와 범위 제한
+
+`firmware/pan_tilt_fw/motor.cpp`
+
+```cpp
+void hold() {
+  if (!ready_ || holding_) return;
+  readPresent();                                       // Present Position 읽기
+  for (int k = 0; k < cfg::AXES; k++)
+    writeGoal(k, clampToSafe(k, present_[k]));         // goal = 현재 위치
+  holding_ = true;
+}
+
+void applyGoal(long raw_yaw, long raw_pitch) {
+  if (!ready_) return;                                 // 초기화 실패면 이동 무시
+  for (int k = 0; k < cfg::AXES; k++) {
+    int32_t g = clampToSafe(k, raw[k]);                // SAFE_MIN ~ SAFE_MAX
+    if (g != raw[k]) limited_ = true;                  // flag LIMIT
+    if (holding_ || g != goal_[k]) writeGoal(k, g);
+  }
+  holding_ = false;
+}
+```

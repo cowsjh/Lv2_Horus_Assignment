@@ -1,0 +1,7 @@
+episode,t_lost_s,t_redetect_s,t_tracking_s,redetect_to_tracking_s,lost_to_tracking_s,result
+1,0.966,4.032,4.101,0.069,3.135,TRACKING 복귀
+2,6.269,8.936,9.004,0.068,2.735,TRACKING 복귀
+3,11.205,13.506,13.573,0.068,2.368,TRACKING 복귀
+4,16.375,18.343,18.410,0.067,2.035,TRACKING 복귀
+5,20.946,22.979,23.048,0.069,2.102,TRACKING 복귀
+6,25.415,,,,,실패(복귀 없음)
