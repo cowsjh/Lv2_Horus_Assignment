@@ -10,9 +10,7 @@ __pycache__/
 venv/
 
 # format
-*.bag
 *.db3
-*.mcap
 *.mp4
 *.mov
 recordings/*
